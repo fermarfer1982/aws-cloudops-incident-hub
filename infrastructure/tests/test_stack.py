@@ -79,25 +79,25 @@ def test_dynamodb_tables_are_ephemeral():
     assert all(table["UpdateReplacePolicy"] == "Delete" for table in tables)
 
 
-def test_lambdas_have_bounded_compute_and_both_table_names():
-    template = get_template()
-    template.has_resource_properties(
-        "AWS::Lambda::Function",
-        {
-            "ReservedConcurrentExecutions": 2,
-            "MemorySize": 256,
-            "Runtime": "python3.13",
-            "Architectures": ["arm64"],
-            "Environment": {
-                "Variables": Match.object_like(
-                    {
-                        "TABLE_NAME": Match.any_value(),
-                        "METRICS_TABLE_NAME": Match.any_value(),
-                    }
-                )
-            },
-        },
-    )
+def test_lambdas_have_bounded_compute_without_reserved_concurrency():
+    resources = get_template().to_json()["Resources"]
+    functions = [
+        resource["Properties"]
+        for resource in resources.values()
+        if resource["Type"] == "AWS::Lambda::Function"
+    ]
+
+    assert len(functions) == 2
+
+    for function in functions:
+        assert "ReservedConcurrentExecutions" not in function
+        assert function["MemorySize"] == 256
+        assert function["Runtime"] == "python3.13"
+        assert function["Architectures"] == ["arm64"]
+
+        variables = function["Environment"]["Variables"]
+        assert "TABLE_NAME" in variables
+        assert "METRICS_TABLE_NAME" in variables
 
 
 def test_processing_queue_has_encryption_and_dlq():
@@ -123,6 +123,7 @@ def test_sqs_mapping_reports_partial_batch_failures():
         {
             "BatchSize": 10,
             "MaximumBatchingWindowInSeconds": 5,
+            "ScalingConfig": {"MaximumConcurrency": 2},
             "FunctionResponseTypes": ["ReportBatchItemFailures"],
         },
     )
