@@ -59,3 +59,6 @@ jobs:
 
       - name: Enforce Well-Architected review guardrails
         run: python scripts/check_well_architected_review.py
+
+      - name: Enforce multi-account blueprint guardrails
+        run: python scripts/check_multi_account_blueprint.py
