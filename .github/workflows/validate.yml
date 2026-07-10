@@ -33,6 +33,9 @@ jobs:
       - name: Lint
         run: ruff check backend tests infrastructure scripts
 
+      - name: Scan repository for common secret patterns
+        run: python scripts/check_repository_secrets.py
+
       - name: Test application
         env:
           PYTHONPATH: backend
@@ -68,3 +71,6 @@ jobs:
 
       - name: Enforce P1 reliability and operations controls
         run: python scripts/check_p1_controls.py
+
+      - name: Enforce operational security and supply-chain controls
+        run: python scripts/check_security_supply_chain.py

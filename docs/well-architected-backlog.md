@@ -26,8 +26,8 @@ Este backlog convierte los hallazgos de `docs/well-architected-review.md` en acc
 | WA-009 | P1 | Operational excellence | Definir SLO y error budget | SLO de disponibilidad, latencia y procesamiento asíncrono | Datos de carga y negocio | Definido en referencia; pendiente baseline y aprobación |
 | WA-010 | P1 | Operational excellence | Asignar ownership | Matriz RACI o tabla con owner técnico, seguridad, coste y operación | Organización objetivo | Pendiente |
 | WA-011 | P1 | Cost optimization | Configurar AWS Budget y anomalías de coste | Evidencia de presupuesto, umbrales y receptores | Cuenta AWS de laboratorio | Checklist completado; configuración de cuenta pendiente |
-| WA-012 | P1 | Security | Añadir throttling y protección frente a abuso | Límites explícitos en API Gateway; WAF evaluado si aplica | Perfil de tráfico | Pendiente |
-| WA-013 | P1 | Security | Añadir análisis de dependencias y secretos | Dependabot/CodeQL/secret scanning o herramienta equivalente | Política GitHub | Pendiente |
+| WA-012 | P1 | Security | Añadir throttling y protección frente a abuso | Límites explícitos en API Gateway; WAF evaluado si aplica | Perfil de tráfico | Throttling completado en referencia; carga y edge protection pendientes |
+| WA-013 | P1 | Security | Añadir análisis de dependencias y secretos | Dependabot/CodeQL/secret scanning o herramienta equivalente | Política GitHub | Automatización completada; configuración y alertas reales pendientes |
 | WA-014 | P1 | Operational excellence | Enrutar alarmas a un canal real | Una alarma de prueba llega a un receptor autorizado | SNS/Chatbot/PagerDuty o equivalente | IaC opcional completada; receptor real pendiente |
 | WA-015 | P1 | Reliability | Documentar estrategia regional | Decisión explícita: single-region recovery o multi-region | WA-006 | Single-region documentado; decisión regional pendiente |
 | WA-016 | P2 | Performance | Implementar paginación con continuation token | `GET /events` nunca depende de límites estáticos o carga completa | WA-004 | Pendiente |
@@ -36,7 +36,7 @@ Este backlog convierte los hallazgos de `docs/well-architected-review.md` en acc
 | WA-019 | P2 | Operational excellence | Ejecutar game day | Evidencia de fallo Lambda, backlog, DLQ y recuperación | WA-014 | Pendiente |
 | WA-020 | P2 | Operational excellence | Añadir runbook de release y rollback | Criterios de rollback y pasos comprobables | Estrategia de release | Pendiente |
 | WA-021 | P2 | Security | Definir clasificación y retención de datos | Tabla de categorías, retención, cifrado y borrado | Requisitos legales | Pendiente |
-| WA-022 | P2 | Security | Generar SBOM | Artifact o release incluye SBOM verificable | Herramienta seleccionada | Pendiente |
+| WA-022 | P2 | Security | Generar SBOM | Artifact o release incluye SBOM verificable | Herramienta seleccionada | Workflow completado; artifact real pendiente de ejecución |
 | WA-023 | P2 | Cost optimization | Medir coste por 1.000 incidencias | Estimación low/expected/peak con supuestos versionados | WA-017 | Pendiente |
 | WA-024 | P2 | Cost optimization | Ampliar tags obligatorios | Owner, application, environment, cost-center y expiration | Convención de tagging | Pendiente |
 | WA-025 | P2 | Sustainability | Definir KPI de eficiencia | Incidencias por invocación y GB-second, retención y tendencia | WA-017 | Pendiente |
@@ -56,9 +56,11 @@ Estos riesgos no deben confundirse con controles de producción completados:
 - Las alarmas no tienen acciones de notificación salvo que se configure un receptor explícito.
 - Los logs del perfil efímero tienen retención de un día.
 - Concurrencia reservada muy baja.
+- Los límites de throttling no se han validado con tráfico representativo.
+- GitHub push protection y otras opciones de seguridad requieren evidencia de configuración del repositorio.
 - Sin paginación mediante continuation token.
 
-Los controles P0 se consideran completados en la implementación de referencia. Los controles P1 de recuperación y operación están parcialmente implementados, pero requieren aprobación, despliegue y evidencia real antes de aceptar usuarios o datos reales.
+Los controles P0 se consideran completados en la implementación de referencia. Los controles P1 de recuperación, operación y seguridad disponen de IaC, automatización o documentación parcial, pero requieren aprobación, despliegue y evidencia real antes de aceptar usuarios o datos reales.
 
 ## Definition of done para producción
 
@@ -70,7 +72,8 @@ El workload no debe describirse como production-ready hasta que, como mínimo:
 4. La API tenga autenticación, autorización, CORS restringido y límites de abuso validados en el entorno objetivo.
 5. No existan scans completos en rutas operativas principales y se haya probado paginación con carga representativa.
 6. Se hayan configurado controles de coste de cuenta.
-7. La revisión Well-Architected se repita con evidencias de un entorno real.
+7. CodeQL, Dependabot, secret scanning y SBOM produzcan evidencia real y tengan un proceso de triage.
+8. La revisión Well-Architected se repita con evidencias de un entorno real.
 
 ## Cadencia de revisión
 
