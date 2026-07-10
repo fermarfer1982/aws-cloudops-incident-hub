@@ -84,6 +84,15 @@ Resources:
                 Action: dynamodb:GetItem
                 Resource: !Sub >-
                   arn:${AWS::Partition}:dynamodb:${DeploymentRegion}:${AWS::AccountId}:table/cloudops-incidents
+              - Sid: ReadEphemeralLoadTestClient
+                Effect: Allow
+                Action: cognito-idp:DescribeUserPoolClient
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:cognito-idp:${DeploymentRegion}:${AWS::AccountId}:userpool/*
+              - Sid: ReadNativePerformanceMetrics
+                Effect: Allow
+                Action: cloudwatch:GetMetricData
+                Resource: "*"
 
 Outputs:
   RoleArn:
