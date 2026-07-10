@@ -3,72 +3,95 @@
 [![Validate](https://github.com/fermarfer1982/aws-cloudops-incident-hub/actions/workflows/validate.yml/badge.svg)](https://github.com/fermarfer1982/aws-cloudops-incident-hub/actions/workflows/validate.yml)
 [![Publish demo](https://github.com/fermarfer1982/aws-cloudops-incident-hub/actions/workflows/pages.yml/badge.svg)](https://github.com/fermarfer1982/aws-cloudops-incident-hub/actions/workflows/pages.yml)
 
-Plataforma serverless para recibir, clasificar y gestionar incidencias de infraestructura. El proyecto está orientado a demostrar competencias de **AWS Solutions Architecture**, Infrastructure as Code, seguridad, resiliencia, observabilidad y optimización de costes.
+Plataforma serverless para recibir, clasificar y gestionar incidencias de infraestructura. El proyecto demuestra arquitectura AWS, Infrastructure as Code, seguridad, resiliencia, observabilidad, CI/CD y gobierno de costes.
 
-> El laboratorio funciona íntegramente en local. La demo pública se publica en GitHub Pages. No es necesario mantener recursos activos en AWS.
+> El laboratorio funciona en Docker y la demo pública usa datos simulados en GitHub Pages. La arquitectura AWS puede desplegarse de forma efímera, pero no se mantiene ningún stack activo por defecto.
+
+## Demo pública
+
+```text
+https://fermarfer1982.github.io/aws-cloudops-incident-hub/
+```
+
+La demo es estática y no expone la red local ni una API AWS.
 
 ## Qué demuestra
 
-- Diseño para Amazon API Gateway, AWS Lambda y Amazon DynamoDB.
-- Backend Python portable entre Docker local y Lambda.
-- Infraestructura declarada con AWS CDK y sintetizada a CloudFormation.
-- Tests de aplicación y de infraestructura.
-- Políticas IAM limitadas al recurso requerido.
-- Guardrails automáticos contra recursos de alto riesgo de coste.
-- Dashboard público con datos de demostración.
+- API FastAPI portable entre Docker y AWS Lambda.
+- Amazon API Gateway HTTP API con Amazon Cognito y autorización mediante scopes JWT.
+- CORS restringido mediante allowlist configurable.
 - Procesamiento asíncrono con EventBridge, SQS, Lambda y Dead Letter Queue.
-- Idempotencia mediante identificadores deterministas y escrituras condicionales.
-- Respuestas parciales de lotes SQS para reintentar solo los mensajes fallidos.
-- Dashboard de CloudWatch y alarmas operativas basadas en métricas nativas.
-- Runbook para investigación y redrive controlado de mensajes en la DLQ.
-- Despliegue efímero manual con GitHub OIDC y credenciales STS temporales.
-- Destrucción automática y workflow independiente de limpieza de emergencia.
-- Autoevaluación AWS Well-Architected con riesgos, evidencias y backlog de remediación.
-- Blueprint multi-account con Organizations, Identity Center, cuentas fundacionales, SCP y promoción Dev → Stage → Prod.
+- Idempotencia y respuestas parciales de lotes SQS.
+- DynamoDB Query mediante GSIs por fecha, sede, estado y severidad.
+- Métricas incrementales actualizadas con transacciones DynamoDB.
+- CloudWatch dashboard, alarmas y runbook de DLQ.
+- AWS CDK, CloudFormation, tests y guardrails de coste y seguridad.
+- GitHub Actions con OIDC y credenciales STS temporales.
+- Despliegue efímero, pruebas de humo y destrucción automática.
+- Revisión AWS Well-Architected y backlog de remediación.
+- Blueprint multi-account con Organizations, IAM Identity Center y promoción Dev → Stage → Prod.
 
-## Arquitectura MVP
+## Arquitectura AWS de referencia
 
 ```mermaid
 flowchart LR
-    S[Servidor / agente] --> API[API Gateway + Lambda de ingesta]
-    API --> EB[EventBridge custom bus]
+    U[Usuario o cliente autorizado] --> COG[Amazon Cognito]
+    COG -->|Access token + scope| API[API Gateway HTTP API]
+    API --> L1[Lambda de ingesta]
+    L1 --> EB[EventBridge custom bus]
     EB --> Q[SQS processing queue]
-    Q --> P[Lambda processor]
+    Q --> L2[Lambda processor]
     Q -. tras 3 fallos .-> DLQ[SQS Dead Letter Queue]
-    P --> DB[(DynamoDB)]
-    API --> CW[CloudWatch]
-    P --> CW
+    L2 --> INC[(DynamoDB incidents + GSIs)]
+    L2 --> MET[(DynamoDB metric aggregates)]
+    L1 --> CW[CloudWatch]
+    L2 --> CW
     Q --> CW
     DLQ --> CW
-    LOCAL[Docker local] --> DIRECT[Procesamiento síncrono]
-    DIRECT --> DDBL[(DynamoDB Local)]
-    GH[GitHub Actions] --> CI[Lint + Tests + CDK Synth]
-    GH -. OIDC manual .-> AWS[AWS deployment efímero]
-    AWS -. destroy .-> CLEAN[Stack eliminado]
-    PAGES[GitHub Pages] --> UI[Dashboard demo]
 ```
 
-En local, la API utiliza un adaptador síncrono para no depender de servicios cloud. En AWS, `POST /events` publica el evento en EventBridge y devuelve `202 Accepted`; SQS desacopla la ingesta del procesamiento y la DLQ conserva los mensajes que superan el límite de reintentos.
+El API cloud aplica estos scopes antes de invocar Lambda:
+
+| Scope | Operaciones |
+|---|---|
+| `cloudops-incident-hub/incidents.read` | `GET /events`, `GET /metrics` |
+| `cloudops-incident-hub/incidents.write` | `POST /events` |
+| `cloudops-incident-hub/incidents.manage` | `PATCH /events/{incident_id}/status` |
+
+`GET /health` permanece público para health checks. El resto de rutas del API Gateway requiere un access token válido y el scope correspondiente.
+
+## Modo local
+
+```mermaid
+flowchart LR
+    UI[Dashboard local] --> API[FastAPI en Docker]
+    API --> DIRECT[Procesamiento síncrono]
+    DIRECT --> INC[(DynamoDB Local incidents v2)]
+    DIRECT --> MET[(DynamoDB Local metrics v2)]
+```
+
+El modo local no usa Cognito ni API Gateway. Permanece sin autenticación cloud porque está destinado exclusivamente a desarrollo dentro de una red confiable. Sí utiliza una allowlist CORS explícita.
 
 ## Inicio rápido en Ubuntu Server
 
 ### Requisitos
 
-- Docker Engine con el plugin Docker Compose.
+- Docker Engine con Docker Compose.
 - Git.
-- Puertos TCP 8080 y 8081 accesibles desde tu red local.
+- Puertos TCP 8080 y 8081 accesibles desde la red local.
 
 ### Arrancar
 
 ```bash
+cd /opt/aws-cloudops-incident-hub
 cp .env.example .env
 docker compose up -d --build
 ```
 
-Comprobar:
+Comprobar el backend:
 
 ```bash
-curl http://localhost:8080/health
+curl -s http://localhost:8080/health | python3 -m json.tool
 ```
 
 Abrir el dashboard:
@@ -77,28 +100,48 @@ Abrir el dashboard:
 http://IP_DEL_SERVIDOR:8081
 ```
 
-En el selector **Fuente de datos**, elige **API local** para trabajar contra el backend real.
+En **Fuente de datos**, selecciona **API local**.
 
-### Cargar incidencias de ejemplo
+### Cambio de esquema local v0.3
+
+Esta fase utiliza tablas nuevas para evitar modificar in-place la tabla anterior de DynamoDB Local:
+
+```text
+cloudops-incidents-v2
+cloudops-incident-metrics-v2
+```
+
+Los datos antiguos permanecen en el volumen, pero la versión nueva no los consulta. Carga nuevamente las incidencias de ejemplo:
 
 ```bash
 bash scripts/seed_demo.sh
 ```
 
-### Consultar la API
+### Consultar la API local
 
 ```bash
-curl http://localhost:8080/events | python3 -m json.tool
-curl http://localhost:8080/metrics | python3 -m json.tool
+curl -s http://localhost:8080/events | python3 -m json.tool
+curl -s http://localhost:8080/metrics | python3 -m json.tool
 ```
 
-### Simular el contrato EventBridge → SQS en local
+Crear una incidencia:
+
+```bash
+curl -s -X POST http://localhost:8080/events \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "source": "pbs-01",
+    "site": "Calahorra",
+    "type": "BACKUP_FAILED",
+    "message": "La copia de vm-105 ha fallado"
+  }' | python3 -m json.tool
+```
+
+Simular EventBridge → SQS → Lambda en local:
 
 ```bash
 make simulate-async
 ```
-
-Este comando ejecuta el handler de la Lambda procesadora dentro del contenedor, usando un sobre con el mismo formato que recibiría desde SQS, y persiste la incidencia en DynamoDB Local.
 
 Documentación OpenAPI:
 
@@ -106,17 +149,32 @@ Documentación OpenAPI:
 http://IP_DEL_SERVIDOR:8080/docs
 ```
 
-### Detener y conservar datos
+### Detener
+
+Conservar datos:
 
 ```bash
 docker compose down
 ```
 
-### Eliminar también la base de datos local
+Eliminar también el volumen local:
 
 ```bash
 docker compose down -v
 ```
+
+## Modelo DynamoDB
+
+La tabla de incidencias mantiene `incident_id` como clave primaria y define cuatro GSIs:
+
+| Índice | Partition key | Sort key | Uso |
+|---|---|---|---|
+| `incidents-by-time` | `entity_type` | `created_at` | Incidencias más recientes |
+| `incidents-by-site` | `site` | `created_at` | Incidencias por sede |
+| `incidents-by-status` | `status` | `created_at` | Incidencias por estado |
+| `incidents-by-severity` | `severity` | `created_at` | Incidencias por severidad |
+
+Los listados utilizan `Query`, no `Scan`. Una segunda tabla mantiene contadores globales y por sede. La creación de incidencias y los cambios de estado actualizan datos y contadores mediante transacciones.
 
 ## Desarrollo y validación
 
@@ -125,182 +183,123 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r backend/requirements-dev.txt
 pip install -r infrastructure/requirements.txt
+
 export PYTHONPATH="$PWD/backend"
 pytest -q tests
-cd infrastructure && PYTHONPATH=. python -m pytest -q tests && cdk synth
+
+cd infrastructure
+PYTHONPATH=. python -m pytest -q tests
+cdk synth
 ```
 
-El comando siguiente inspecciona la plantilla sintetizada y falla si encuentra NAT Gateway, EC2, RDS, ALB, EKS, OpenSearch o ElastiCache:
+Guardrails ejecutables:
 
 ```bash
 python3 scripts/check_zero_cost.py infrastructure/cdk.out/CloudOpsIncidentHubStack.template.json
-```
-
-Los workflows OIDC también tienen guardrails estáticos:
-
-```bash
 python3 scripts/check_oidc_workflows.py
-```
-
-La estructura y trazabilidad de la revisión Well-Architected se validan con:
-
-```bash
 python3 scripts/check_well_architected_review.py
-```
-
-El blueprint multi-account tiene una comprobación ejecutable independiente:
-
-```bash
 python3 scripts/check_multi_account_blueprint.py
+python3 scripts/check_p0_controls.py
 ```
 
-## Endpoints
+La CI falla si detecta, entre otros problemas:
 
-| Método | Ruta | Función |
-|---|---|---|
-| GET | `/health` | Estado de la API |
-| POST | `/events` | Registrar localmente o aceptar un evento para procesamiento asíncrono |
-| GET | `/events` | Listar y filtrar incidencias |
-| PATCH | `/events/{id}/status` | Cambiar el estado |
-| GET | `/metrics` | Resumen operacional |
-
-Ejemplo:
-
-```bash
-curl -X POST http://localhost:8080/events \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "source": "pbs-01",
-    "site": "Calahorra",
-    "type": "BACKUP_FAILED",
-    "message": "La copia de vm-105 ha fallado"
-  }'
-```
-
-## Observabilidad
-
-La plantilla CDK crea un dashboard denominado `cloudops-incident-hub-operations` con métricas nativas de Lambda y SQS. También define cuatro alarmas:
-
-- Errores de la Lambda de ingesta.
-- Errores de la Lambda procesadora.
-- Antigüedad excesiva del mensaje más antiguo.
-- Presencia de mensajes en la Dead Letter Queue.
-
-No se configuran acciones SNS automáticas y no se emiten métricas personalizadas. Consulta:
-
-- [Diseño de observabilidad](docs/observability.md).
-- [Runbook de la Dead Letter Queue](docs/runbook-dlq.md).
-- [ADR-003: métricas nativas de CloudWatch](docs/adr/003-native-cloudwatch-observability.md).
+- Recursos de alto riesgo de coste.
+- Access keys AWS permanentes en workflows.
+- Disparadores OIDC inseguros.
+- Pérdida de artefactos Well-Architected o multi-account.
+- CORS comodín.
+- Rutas cloud sin scopes JWT.
+- Uso de DynamoDB Scan en las rutas operativas.
 
 ## Despliegue efímero con GitHub OIDC
 
-El workflow `Deploy ephemeral AWS lab` se ejecuta solo de forma manual desde `main`. Utiliza un token OIDC de GitHub para obtener credenciales STS temporales, despliega el stack, ejecuta pruebas de humo, conserva evidencias durante siete días y llama a `cdk destroy` aunque falle una prueba anterior.
+El workflow **Deploy ephemeral AWS lab**:
 
-No se almacenan access keys de AWS en GitHub. La política de confianza está restringida al repositorio y al environment `aws-ephemeral`.
+1. Exige confirmación manual.
+2. Obtiene credenciales temporales mediante OIDC.
+3. Ejecuta tests, CDK synth y guardrails.
+4. Despliega el stack.
+5. Comprueba que `/health` funciona.
+6. Comprueba que `/events` rechaza una petición anónima.
+7. Inyecta un evento sintético en EventBridge.
+8. Verifica su persistencia en DynamoDB.
+9. Conserva evidencias durante siete días.
+10. Ejecuta `cdk destroy` y comprueba la eliminación.
 
-También existe `Destroy ephemeral AWS lab` para una limpieza manual de emergencia cuando una ejecución no alcanza su fase de destrucción.
+Existe además **Destroy ephemeral AWS lab** como mecanismo de limpieza de emergencia.
 
-La configuración completa está en:
+No se almacenan access keys AWS en GitHub. Mantener el código y los workflows sin ejecutarlos no crea recursos AWS.
 
-- [Despliegue con GitHub OIDC](docs/github-oidc-deployment.md).
-- [Plantilla del rol federado](bootstrap/github-oidc-role.yml).
-- [ADR-004: despliegue efímero mediante OIDC](docs/adr/004-github-oidc-ephemeral-deployment.md).
+## Observabilidad
 
-Mantener estos workflows sin configurarlos ni ejecutarlos no crea recursos en AWS. Un despliegue real debe hacerse con créditos o Free Plan, alertas de gasto y revisión posterior; no se considera una garantía absoluta de 0,00 €.
+La plantilla crea el dashboard `cloudops-incident-hub-operations` y alarmas para:
 
-## AWS Well-Architected Review
-
-El repositorio contiene una autoevaluación versionada contra los seis pilares del AWS Well-Architected Framework:
-
-- Excelencia operativa.
-- Seguridad.
-- Fiabilidad.
-- Eficiencia del rendimiento.
-- Optimización de costes.
-- Sostenibilidad.
-
-La revisión distingue entre controles existentes, riesgos aceptados exclusivamente para el laboratorio y bloqueadores de producción. No se presenta como una auditoría externa ni como una revisión realizada en AWS Well-Architected Tool.
-
-Conclusiones principales:
-
-- La arquitectura es sólida como laboratorio serverless y demostración de portfolio.
-- El API anónimo y el CORS abierto son bloqueadores para producción.
-- Los accesos basados en DynamoDB Scan deben sustituirse antes de escalar.
-- RTO, RPO, SLO, ownership y restauración todavía no están definidos.
-- El lifecycle efímero y los guardrails reducen el riesgo de coste, pero no sustituyen AWS Budgets y controles de cuenta.
+- Errores de la Lambda de ingesta.
+- Errores de la Lambda procesadora.
+- Antigüedad del mensaje más antiguo.
+- Mensajes presentes en la DLQ.
 
 Documentación:
+
+- [Diseño de observabilidad](docs/observability.md).
+- [Runbook de la DLQ](docs/runbook-dlq.md).
+- [Procesamiento event-driven](docs/event-driven-processing.md).
+
+## AWS Well-Architected
+
+La revisión versionada evalúa los seis pilares y separa:
+
+- Controles implementados en la referencia.
+- Riesgos aceptados únicamente para el laboratorio.
+- Evidencia que todavía debe obtenerse en AWS.
+- Bloqueadores pendientes para producción.
+
+WA-001 a WA-005 están completados en la implementación de referencia. El workload sigue **sin estar preparado para producción** porque permanecen abiertos RTO/RPO, PITR y restore, SLO y ownership, alarm routing, budgets, protección frente a abuso, supply-chain security, paginación y pruebas de carga.
 
 - [Revisión completa](docs/well-architected-review.md).
 - [Backlog de remediación](docs/well-architected-backlog.md).
-- [ADR-005: enfoque de autoevaluación](docs/adr/005-well-architected-self-assessment.md).
+- [Controles P0](docs/p0-production-controls.md).
 
-## Arquitectura multi-account de producción
+## Arquitectura multi-account
 
-El target state de producción separa gobierno, seguridad, logging, plataforma y workloads mediante AWS Organizations:
+El target state separa:
 
-```mermaid
-flowchart TB
-    ROOT[AWS Organizations]
-    ROOT --> SEC[Security OU]
-    ROOT --> INFRA[Infrastructure OU]
-    ROOT --> NPROD[Workloads-NonProduction OU]
-    ROOT --> PROD[Workloads-Production OU]
-    ROOT --> SBOX[Sandbox OU]
+- Management.
+- Log Archive.
+- Security Tooling.
+- Shared Services.
+- Network.
+- CloudOps Dev.
+- CloudOps Stage.
+- CloudOps Prod.
+- Sandbox.
 
-    SEC --> LOG[Log Archive]
-    SEC --> AUDIT[Security Tooling]
-    INFRA --> SHARED[Shared Services]
-    INFRA --> NET[Network]
-    NPROD --> DEV[CloudOps Dev]
-    NPROD --> STAGE[CloudOps Stage]
-    PROD --> PRD[CloudOps Prod]
-    SBOX --> SBX[Sandbox Users]
-```
+Los usuarios accederían mediante IAM Identity Center y los pipelines utilizarían roles OIDC separados por cuenta. Esta arquitectura es un blueprint documental y no crea cuentas ni activa Control Tower.
 
-El management account queda reservado para Organizations, billing, Identity Center e integraciones organizativas. Los usuarios acceden mediante IAM Identity Center; los pipelines usan roles OIDC separados por cuenta y promocionan artefactos inmutables de Dev a Stage y Prod.
-
-Esta fase es exclusivamente documental: no crea cuentas, OUs, Control Tower, SCP, servicios de seguridad ni costes AWS.
-
-Documentación:
-
-- [Arquitectura multi-account completa](docs/multi-account-production-architecture.md).
+- [Arquitectura multi-account](docs/multi-account-production-architecture.md).
 - [Matriz de controles](docs/multi-account-control-matrix.md).
-- [Plan de migración por fases](docs/multi-account-migration-plan.md).
-- [Blueprint estructurado](governance/organization-blueprint.json).
-- [ADR-006: landing zone multi-account](docs/adr/006-multi-account-production-landing-zone.md).
-
-## GitHub Pages
-
-El workflow `.github/workflows/pages.yml` publica automáticamente el directorio `frontend`.
-
-Después de subir el repositorio:
-
-1. Abre **Settings → Pages**.
-2. Selecciona **GitHub Actions** como fuente.
-3. Ejecuta el workflow **Publish demo** o sube un cambio a `frontend/`.
+- [Plan de migración](docs/multi-account-migration-plan.md).
+- [Blueprint JSON](governance/organization-blueprint.json).
 
 ## Coste
 
-La ejecución local y GitHub Pages no consumen servicios de AWS. La plantilla cloud está diseñada para despliegues efímeros y evita servicios con coste fijo o fácil de olvidar. No se mantiene un stack desplegado; cualquier despliegue real debe revisarse y destruirse al terminar la demostración.
-
-La arquitectura multi-account representa un target state de producción. Implementarla sí crearía cuentas y servicios persistentes, por lo que requeriría una estimación separada, AWS Budgets, detección de anomalías y gobierno financiero.
-
-Consulta [docs/cost-control.md](docs/cost-control.md), [docs/event-driven-processing.md](docs/event-driven-processing.md), [docs/observability.md](docs/observability.md), [docs/github-oidc-deployment.md](docs/github-oidc-deployment.md), [docs/well-architected-review.md](docs/well-architected-review.md) y [docs/multi-account-production-architecture.md](docs/multi-account-production-architecture.md).
+El modo local y GitHub Pages no consumen servicios AWS. El despliegue AWS es opcional y efímero. Un despliegue real puede generar cargos por Cognito, API Gateway, Lambda, EventBridge, SQS, DynamoDB, CloudWatch y recursos de bootstrap; debe realizarse con presupuestos, alertas y revisión posterior.
 
 ## Roadmap
 
 - [x] API local compatible con Lambda.
-- [x] DynamoDB Local.
-- [x] Dashboard público.
-- [x] AWS CDK y tests de infraestructura.
-- [x] CI y guardrails de coste.
-- [x] EventBridge, SQS y Dead Letter Queue.
-- [x] Idempotencia, reintentos y respuestas parciales de lote.
-- [x] CloudWatch dashboard, alarmas y runbook operacional.
-- [x] GitHub OIDC para despliegue temporal y limpieza de emergencia.
-- [x] Well-Architected review y backlog de remediación.
-- [x] Arquitectura multi-account de producción y plan de migración.
+- [x] DynamoDB Local y dashboard público.
+- [x] AWS CDK, tests y guardrails de coste.
+- [x] EventBridge, SQS, DLQ, idempotencia y reintentos.
+- [x] CloudWatch dashboard, alarmas y runbook.
+- [x] GitHub OIDC, despliegue efímero y limpieza de emergencia.
+- [x] Revisión Well-Architected y backlog.
+- [x] Arquitectura multi-account y plan de migración.
+- [x] Cognito, scopes JWT y CORS restringido.
+- [x] DynamoDB Query y métricas incrementales sin Scan.
+- [ ] Controles P1: recuperación, operación, costes y seguridad adicional.
+- [ ] Paginación, carga y tuning empírico.
 
 ## Licencia
 
