@@ -39,6 +39,22 @@ jobs:
       - name: Validate load-test CLI
         run: python scripts/run_load_test.py --help
 
+      - name: Test pagination contract
+        env:
+          PYTHONPATH: backend
+          AWS_DEFAULT_REGION: eu-west-1
+          AWS_ACCESS_KEY_ID: testing
+          AWS_SECRET_ACCESS_KEY: testing
+        run: pytest -q tests/test_pagination.py
+
+      - name: Test load-report calculations
+        env:
+          PYTHONPATH: backend
+          AWS_DEFAULT_REGION: eu-west-1
+          AWS_ACCESS_KEY_ID: testing
+          AWS_SECRET_ACCESS_KEY: testing
+        run: pytest -q tests/test_load_test_report.py
+
       - name: Test application
         env:
           PYTHONPATH: backend
