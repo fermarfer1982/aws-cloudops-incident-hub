@@ -7,6 +7,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app, get_service
+from app.pagination import (
+    IncidentPage,
+    decode_continuation_token,
+    encode_continuation_token,
+)
 from app.service import IncidentService
 
 
@@ -36,7 +41,7 @@ class MemoryRepository:
         self.items[incident_id]["updated_at"] = updated_at
         return self.items[incident_id]
 
-    def list(self, *, limit=100, severity=None, status=None, site=None):
+    def _filtered_items(self, *, severity=None, status=None, site=None) -> list[dict]:
         items = list(self.items.values())
         if severity:
             items = [item for item in items if item["severity"] == severity]
@@ -44,7 +49,54 @@ class MemoryRepository:
             items = [item for item in items if item["status"] == status]
         if site:
             items = [item for item in items if item["site"] == site]
-        return sorted(items, key=lambda item: item["created_at"], reverse=True)[:limit]
+        return sorted(items, key=lambda item: item["created_at"], reverse=True)
+
+    def list(self, *, limit=100, severity=None, status=None, site=None):
+        return self._filtered_items(
+            severity=severity,
+            status=status,
+            site=site,
+        )[:limit]
+
+    def list_page(
+        self,
+        *,
+        limit=100,
+        severity=None,
+        status=None,
+        site=None,
+        continuation_token=None,
+    ) -> IncidentPage:
+        context = {
+            "index": "memory",
+            "severity": severity,
+            "status": status,
+            "site": site,
+        }
+        offset = 0
+        if continuation_token:
+            key = decode_continuation_token(
+                continuation_token,
+                expected_context=context,
+            )
+            try:
+                offset = int(key["offset"])
+            except (KeyError, ValueError) as exc:
+                from app.pagination import InvalidContinuationToken
+
+                raise InvalidContinuationToken("Memory continuation offset is invalid") from exc
+
+        bounded_limit = min(max(limit, 1), 500)
+        items = self._filtered_items(severity=severity, status=status, site=site)
+        page_items = items[offset : offset + bounded_limit]
+        next_offset = offset + len(page_items)
+        next_token = None
+        if next_offset < len(items):
+            next_token = encode_continuation_token(
+                {"offset": str(next_offset)},
+                context=context,
+            )
+        return IncidentPage(items=page_items, next_token=next_token)
 
     def metrics(self) -> dict:
         incidents = list(self.items.values())

@@ -17,8 +17,8 @@ from .models import (
     Severity,
     StatusUpdate,
 )
+from .pagination import InvalidContinuationToken, PaginatedIncidentRepository
 from .publisher import EventPublisher
-from .repository import IncidentRepository
 from .service import IncidentNotFoundError, IncidentService
 
 logging.basicConfig(
@@ -26,7 +26,7 @@ logging.basicConfig(
     format='{"timestamp":"%(asctime)s","level":"%(levelname)s","logger":"%(name)s","message":"%(message)s"}',
 )
 
-repository = IncidentRepository()
+repository = PaginatedIncidentRepository()
 publisher = EventPublisher() if settings.event_bus_name else None
 service = IncidentService(repository, publisher=publisher)
 
@@ -39,7 +39,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AWS CloudOps Incident Hub API",
-    version="0.3.0",
+    version="0.4.0",
     description=(
         "Local-first incident API. AWS deployments use Cognito JWT authorization "
         "at API Gateway and asynchronous EventBridge/SQS processing."
@@ -53,6 +53,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
+    expose_headers=["X-Next-Token"],
 )
 
 
@@ -88,18 +89,28 @@ def create_event(
 
 @app.get("/events", response_model=list[Incident])
 def list_events(
+    response: Response,
     limit: int = Query(default=100, ge=1, le=500),
     severity: Severity | None = None,
     incident_status: IncidentStatus | None = Query(default=None, alias="status"),
     site: str | None = Query(default=None, min_length=2, max_length=120),
+    next_token: str | None = Query(default=None, min_length=1, max_length=4096),
     incident_service: IncidentService = Depends(get_service),
 ) -> list[dict]:
-    return incident_service.repository.list(
-        limit=limit,
-        severity=severity.value if severity else None,
-        status=incident_status.value if incident_status else None,
-        site=site,
-    )
+    try:
+        page = incident_service.repository.list_page(
+            limit=limit,
+            severity=severity.value if severity else None,
+            status=incident_status.value if incident_status else None,
+            site=site,
+            continuation_token=next_token,
+        )
+    except InvalidContinuationToken as exc:
+        raise HTTPException(status_code=400, detail="Invalid continuation token") from exc
+
+    if page.next_token:
+        response.headers["X-Next-Token"] = page.next_token
+    return page.items
 
 
 @app.patch("/events/{incident_id}/status", response_model=Incident)

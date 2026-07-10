@@ -1,4 +1,4 @@
-.PHONY: up down logs test lint synth validate seed simulate-async clean
+.PHONY: up down logs test lint synth validate seed simulate-async load-test clean
 
 up:
 	docker compose up -d --build
@@ -27,6 +27,9 @@ seed:
 simulate-async:
 	bash scripts/simulate_sqs_event.sh
 
+load-test:
+	python scripts/run_load_test.py --base-url http://localhost:8080 --duration 30 --concurrency 10
+
 clean:
 	docker compose down -v
-	rm -rf infrastructure/cdk.out .pytest_cache .ruff_cache
+	rm -rf infrastructure/cdk.out .pytest_cache .ruff_cache artifacts

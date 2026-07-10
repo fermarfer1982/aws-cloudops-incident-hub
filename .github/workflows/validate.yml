@@ -36,9 +36,28 @@ jobs:
       - name: Scan repository for common secret patterns
         run: python scripts/check_repository_secrets.py
 
+      - name: Validate load-test CLI
+        run: python scripts/run_load_test.py --help
+
+      - name: Test pagination contract
+        env:
+          PYTHONPATH: backend:.
+          AWS_DEFAULT_REGION: eu-west-1
+          AWS_ACCESS_KEY_ID: testing
+          AWS_SECRET_ACCESS_KEY: testing
+        run: pytest -q tests/test_pagination.py
+
+      - name: Test load-report calculations
+        env:
+          PYTHONPATH: backend:.
+          AWS_DEFAULT_REGION: eu-west-1
+          AWS_ACCESS_KEY_ID: testing
+          AWS_SECRET_ACCESS_KEY: testing
+        run: pytest -q tests/test_load_test_report.py
+
       - name: Test application
         env:
-          PYTHONPATH: backend
+          PYTHONPATH: backend:.
           AWS_DEFAULT_REGION: eu-west-1
           AWS_ACCESS_KEY_ID: testing
           AWS_SECRET_ACCESS_KEY: testing
@@ -74,3 +93,6 @@ jobs:
 
       - name: Enforce operational security and supply-chain controls
         run: python scripts/check_security_supply_chain.py
+
+      - name: Enforce pagination and load-testing controls
+        run: python scripts/check_pagination_load_testing.py

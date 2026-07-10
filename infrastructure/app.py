@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from aws_cdk import App, Environment, Tags
 
+from cloudops_infra.performance import expose_pagination_header
 from cloudops_infra.reliability import apply_reliability_controls
 from cloudops_infra.security import (
     DEFAULT_API_BURST_LIMIT,
@@ -92,7 +93,7 @@ stack = CloudOpsIncidentHubStack(
         region=app.node.try_get_context("region") or "eu-west-1",
     ),
     description=(
-        "Serverless CloudOps portfolio project with P0 controls and optional P1 reliability"
+        "Serverless CloudOps portfolio project with security, reliability and pagination"
     ),
     allowed_origins=csv_context(app, "allowed_origins", DEFAULT_ALLOWED_ORIGINS),
     oauth_callback_urls=csv_context(app, "oauth_callback_urls", DEFAULT_CALLBACK_URLS),
@@ -104,6 +105,7 @@ apply_operational_security_controls(
     api_throttling_rate_limit=api_throttling_rate_limit,
     api_throttling_burst_limit=api_throttling_burst_limit,
 )
+expose_pagination_header(stack)
 apply_reliability_controls(
     stack,
     persistent_environment=persistent_environment,
