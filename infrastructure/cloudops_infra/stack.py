@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from aws_cdk import (
+    Aws,
     BundlingOptions,
     CfnOutput,
     Duration,
@@ -10,16 +11,34 @@ from aws_cdk import (
     Stack,
 )
 from aws_cdk import aws_apigatewayv2 as apigwv2
+from aws_cdk import aws_apigatewayv2_authorizers as authorizers
 from aws_cdk import aws_apigatewayv2_integrations as integrations
 from aws_cdk import aws_cloudwatch as cloudwatch
+from aws_cdk import aws_cognito as cognito
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_events as events
 from aws_cdk import aws_events_targets as event_targets
+from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_lambda_event_sources as lambda_event_sources
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_sqs as sqs
 from constructs import Construct
+
+RESOURCE_SERVER_IDENTIFIER = "cloudops-incident-hub"
+READ_SCOPE = f"{RESOURCE_SERVER_IDENTIFIER}/incidents.read"
+WRITE_SCOPE = f"{RESOURCE_SERVER_IDENTIFIER}/incidents.write"
+MANAGE_SCOPE = f"{RESOURCE_SERVER_IDENTIFIER}/incidents.manage"
+
+DEFAULT_ALLOWED_ORIGINS = (
+    "https://fermarfer1982.github.io",
+    "http://localhost:8081",
+    "http://192.168.0.50:8081",
+)
+DEFAULT_CALLBACK_URLS = (
+    "https://fermarfer1982.github.io/aws-cloudops-incident-hub/",
+    "http://localhost:8081/",
+)
 
 
 class CloudOpsIncidentHubStack(Stack):
@@ -29,15 +48,89 @@ class CloudOpsIncidentHubStack(Stack):
         construct_id: str,
         *,
         bundle_dependencies: bool = True,
+        allowed_origins: tuple[str, ...] = DEFAULT_ALLOWED_ORIGINS,
+        oauth_callback_urls: tuple[str, ...] = DEFAULT_CALLBACK_URLS,
+        oauth_logout_urls: tuple[str, ...] = DEFAULT_CALLBACK_URLS,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
+        if not allowed_origins or "*" in allowed_origins:
+            raise ValueError("allowed_origins must be a non-empty explicit allowlist")
+        if not oauth_callback_urls:
+            raise ValueError("At least one OAuth callback URL is required")
+
         table = dynamodb.Table(
             self,
             "IncidentsTable",
+            table_name="cloudops-incidents",
             partition_key=dynamodb.Attribute(
                 name="incident_id",
+                type=dynamodb.AttributeType.STRING,
+            ),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            encryption=dynamodb.TableEncryption.AWS_MANAGED,
+            removal_policy=RemovalPolicy.DESTROY,
+        )
+        table.add_global_secondary_index(
+            index_name="incidents-by-time",
+            partition_key=dynamodb.Attribute(
+                name="entity_type",
+                type=dynamodb.AttributeType.STRING,
+            ),
+            sort_key=dynamodb.Attribute(
+                name="created_at",
+                type=dynamodb.AttributeType.STRING,
+            ),
+            projection_type=dynamodb.ProjectionType.ALL,
+        )
+        table.add_global_secondary_index(
+            index_name="incidents-by-site",
+            partition_key=dynamodb.Attribute(
+                name="site",
+                type=dynamodb.AttributeType.STRING,
+            ),
+            sort_key=dynamodb.Attribute(
+                name="created_at",
+                type=dynamodb.AttributeType.STRING,
+            ),
+            projection_type=dynamodb.ProjectionType.ALL,
+        )
+        table.add_global_secondary_index(
+            index_name="incidents-by-status",
+            partition_key=dynamodb.Attribute(
+                name="status",
+                type=dynamodb.AttributeType.STRING,
+            ),
+            sort_key=dynamodb.Attribute(
+                name="created_at",
+                type=dynamodb.AttributeType.STRING,
+            ),
+            projection_type=dynamodb.ProjectionType.ALL,
+        )
+        table.add_global_secondary_index(
+            index_name="incidents-by-severity",
+            partition_key=dynamodb.Attribute(
+                name="severity",
+                type=dynamodb.AttributeType.STRING,
+            ),
+            sort_key=dynamodb.Attribute(
+                name="created_at",
+                type=dynamodb.AttributeType.STRING,
+            ),
+            projection_type=dynamodb.ProjectionType.ALL,
+        )
+
+        metrics_table = dynamodb.Table(
+            self,
+            "IncidentMetricsTable",
+            table_name="cloudops-incident-metrics",
+            partition_key=dynamodb.Attribute(
+                name="metric_group",
+                type=dynamodb.AttributeType.STRING,
+            ),
+            sort_key=dynamodb.Attribute(
+                name="metric_name",
                 type=dynamodb.AttributeType.STRING,
             ),
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
@@ -93,6 +186,72 @@ class CloudOpsIncidentHubStack(Stack):
             )
         )
 
+        user_pool = cognito.UserPool(
+            self,
+            "UserPool",
+            user_pool_name="cloudops-incident-hub-users",
+            self_sign_up_enabled=False,
+            sign_in_aliases=cognito.SignInAliases(email=True),
+            auto_verify=cognito.AutoVerifiedAttrs(email=True),
+            account_recovery=cognito.AccountRecovery.EMAIL_ONLY,
+            password_policy=cognito.PasswordPolicy(
+                min_length=12,
+                require_digits=True,
+                require_lowercase=True,
+                require_symbols=True,
+                require_uppercase=True,
+                temp_password_validity=Duration.days(3),
+            ),
+            removal_policy=RemovalPolicy.DESTROY,
+        )
+        read_scope = cognito.ResourceServerScope(
+            scope_name="incidents.read",
+            scope_description="Read incidents and operational metrics",
+        )
+        write_scope = cognito.ResourceServerScope(
+            scope_name="incidents.write",
+            scope_description="Submit validated infrastructure incidents",
+        )
+        manage_scope = cognito.ResourceServerScope(
+            scope_name="incidents.manage",
+            scope_description="Change incident workflow status",
+        )
+        resource_server = user_pool.add_resource_server(
+            "ApiResourceServer",
+            identifier=RESOURCE_SERVER_IDENTIFIER,
+            scopes=[read_scope, write_scope, manage_scope],
+        )
+        user_pool_client = user_pool.add_client(
+            "WebClient",
+            user_pool_client_name="cloudops-incident-hub-web",
+            generate_secret=False,
+            prevent_user_existence_errors=True,
+            access_token_validity=Duration.minutes(60),
+            refresh_token_validity=Duration.days(1),
+            enable_token_revocation=True,
+            supported_identity_providers=[
+                cognito.UserPoolClientIdentityProvider.COGNITO,
+            ],
+            o_auth=cognito.OAuthSettings(
+                flows=cognito.OAuthFlows(authorization_code_grant=True),
+                scopes=[
+                    cognito.OAuthScope.OPENID,
+                    cognito.OAuthScope.EMAIL,
+                    cognito.OAuthScope.resource_server(resource_server, read_scope),
+                    cognito.OAuthScope.resource_server(resource_server, write_scope),
+                    cognito.OAuthScope.resource_server(resource_server, manage_scope),
+                ],
+                callback_urls=list(oauth_callback_urls),
+                logout_urls=list(oauth_logout_urls),
+            ),
+        )
+        user_pool_domain = user_pool.add_domain(
+            "UserPoolDomain",
+            cognito_domain=cognito.CognitoDomainOptions(
+                domain_prefix=f"cloudops-incident-hub-{Aws.ACCOUNT_ID}-{Aws.REGION}"
+            ),
+        )
+
         backend_path = str(Path(__file__).resolve().parents[2] / "backend")
         bundling = (
             BundlingOptions(
@@ -126,9 +285,10 @@ class CloudOpsIncidentHubStack(Stack):
             code=backend_code(),
             environment={
                 "TABLE_NAME": table.table_name,
+                "METRICS_TABLE_NAME": metrics_table.table_name,
                 "EVENT_BUS_NAME": event_bus.event_bus_name,
                 "EVENT_SOURCE": "cloudops.incident-hub",
-                "CORS_ORIGINS": "*",
+                "CORS_ORIGINS": ",".join(allowed_origins),
             },
             timeout=Duration.seconds(10),
             memory_size=256,
@@ -136,7 +296,6 @@ class CloudOpsIncidentHubStack(Stack):
             log_group=api_log_group,
             tracing=lambda_.Tracing.DISABLED,
         )
-        table.grant_read_write_data(api_function)
         event_bus.grant_put_events_to(api_function)
 
         processor_log_group = logs.LogGroup(
@@ -152,14 +311,16 @@ class CloudOpsIncidentHubStack(Stack):
             architecture=lambda_.Architecture.ARM_64,
             handler="app.processor.handler",
             code=backend_code(),
-            environment={"TABLE_NAME": table.table_name},
+            environment={
+                "TABLE_NAME": table.table_name,
+                "METRICS_TABLE_NAME": metrics_table.table_name,
+            },
             timeout=Duration.seconds(15),
             memory_size=256,
             reserved_concurrent_executions=2,
             log_group=processor_log_group,
             tracing=lambda_.Tracing.DISABLED,
         )
-        table.grant_read_write_data(processor_function)
         processor_function.add_event_source(
             lambda_event_sources.SqsEventSource(
                 processing_queue,
@@ -169,16 +330,47 @@ class CloudOpsIncidentHubStack(Stack):
             )
         )
 
+        repository_resources = [
+            table.table_arn,
+            f"{table.table_arn}/index/*",
+            metrics_table.table_arn,
+        ]
+        api_function.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "dynamodb:GetItem",
+                    "dynamodb:Query",
+                    "dynamodb:UpdateItem",
+                    "dynamodb:TransactWriteItems",
+                ],
+                resources=repository_resources,
+            )
+        )
+        processor_function.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "dynamodb:GetItem",
+                    "dynamodb:UpdateItem",
+                    "dynamodb:TransactWriteItems",
+                ],
+                resources=[table.table_arn, metrics_table.table_arn],
+            )
+        )
+
         integration = integrations.HttpLambdaIntegration(
             "ApiIntegration",
             handler=api_function,
+        )
+        jwt_authorizer = authorizers.HttpJwtAuthorizer(
+            "CognitoJwtAuthorizer",
+            jwt_issuer=user_pool.user_pool_provider_url,
+            jwt_audience=[user_pool_client.user_pool_client_id],
         )
         api = apigwv2.HttpApi(
             self,
             "HttpApi",
             api_name="cloudops-incident-hub-api",
-            description="HTTP API for the CloudOps Incident Hub portfolio project",
-            default_integration=integration,
+            description="Authenticated HTTP API for AWS CloudOps Incident Hub",
             cors_preflight=apigwv2.CorsPreflightOptions(
                 allow_headers=["content-type", "authorization"],
                 allow_methods=[
@@ -187,9 +379,42 @@ class CloudOpsIncidentHubStack(Stack):
                     apigwv2.CorsHttpMethod.PATCH,
                     apigwv2.CorsHttpMethod.OPTIONS,
                 ],
-                allow_origins=["*"],
+                allow_origins=list(allowed_origins),
                 max_age=Duration.hours(1),
             ),
+        )
+        api.add_routes(
+            path="/health",
+            methods=[apigwv2.HttpMethod.GET],
+            integration=integration,
+        )
+        api.add_routes(
+            path="/events",
+            methods=[apigwv2.HttpMethod.POST],
+            integration=integration,
+            authorizer=jwt_authorizer,
+            authorization_scopes=[WRITE_SCOPE],
+        )
+        api.add_routes(
+            path="/events",
+            methods=[apigwv2.HttpMethod.GET],
+            integration=integration,
+            authorizer=jwt_authorizer,
+            authorization_scopes=[READ_SCOPE],
+        )
+        api.add_routes(
+            path="/events/{incident_id}/status",
+            methods=[apigwv2.HttpMethod.PATCH],
+            integration=integration,
+            authorizer=jwt_authorizer,
+            authorization_scopes=[MANAGE_SCOPE],
+        )
+        api.add_routes(
+            path="/metrics",
+            methods=[apigwv2.HttpMethod.GET],
+            integration=integration,
+            authorizer=jwt_authorizer,
+            authorization_scopes=[READ_SCOPE],
         )
 
         api_error_alarm = api_function.metric_errors(
@@ -343,7 +568,20 @@ class CloudOpsIncidentHubStack(Stack):
 
         CfnOutput(self, "ApiUrl", value=api.api_endpoint)
         CfnOutput(self, "TableName", value=table.table_name)
+        CfnOutput(self, "MetricsTableName", value=metrics_table.table_name)
         CfnOutput(self, "EventBusName", value=event_bus.event_bus_name)
         CfnOutput(self, "ProcessingQueueName", value=processing_queue.queue_name)
         CfnOutput(self, "ProcessingDlqName", value=processing_dlq.queue_name)
         CfnOutput(self, "OperationsDashboardName", value=dashboard.dashboard_name)
+        CfnOutput(self, "UserPoolId", value=user_pool.user_pool_id)
+        CfnOutput(self, "UserPoolClientId", value=user_pool_client.user_pool_client_id)
+        CfnOutput(self, "UserPoolIssuer", value=user_pool.user_pool_provider_url)
+        CfnOutput(self, "HostedUiBaseUrl", value=user_pool_domain.base_url())
+        CfnOutput(
+            self,
+            "HostedSignInUrl",
+            value=user_pool_domain.sign_in_url(
+                user_pool_client,
+                redirect_uri=oauth_callback_urls[0],
+            ),
+        )
