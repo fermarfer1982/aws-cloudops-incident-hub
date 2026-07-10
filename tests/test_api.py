@@ -2,6 +2,7 @@ def test_health(client):
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+    assert response.json()["ingestion_mode"] == "synchronous-local"
 
 
 def test_create_classifies_backup_failure_as_critical(client):
@@ -19,6 +20,7 @@ def test_create_classifies_backup_failure_as_critical(client):
     assert body["severity"] == "critical"
     assert body["status"] == "open"
     assert body["incident_id"].startswith("INC-")
+    assert body["event_id"]
 
 
 def test_disk_above_95_is_critical(client):
@@ -75,3 +77,33 @@ def test_update_status_and_metrics(client):
     assert metrics["total"] == 1
     assert metrics["critical"] == 1
     assert metrics["investigating"] == 1
+
+
+def test_asynchronous_ingestion_returns_accepted(app_client_factory):
+    class FakePublisher:
+        def __init__(self):
+            self.calls = []
+
+        def publish(self, event_id, event):
+            self.calls.append((event_id, event))
+
+    publisher = FakePublisher()
+    client, repository = app_client_factory(publisher=publisher)
+
+    response = client.post(
+        "/events",
+        json={
+            "source": "srv-01",
+            "site": "Calahorra",
+            "type": "SERVICE_DOWN",
+            "message": "Service unavailable",
+        },
+    )
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["status"] == "accepted"
+    assert body["mode"] == "asynchronous"
+    assert body["incident_id"].startswith("INC-")
+    assert len(publisher.calls) == 1
+    assert repository.items == {}
