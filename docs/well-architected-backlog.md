@@ -20,16 +20,16 @@ Este backlog convierte los hallazgos de `docs/well-architected-review.md` en acc
 | WA-003 | P0 | Security | Sustituir CORS `*` por allowlist | CloudFormation contiene únicamente orígenes aprobados | Dominios configurables mediante contexto CDK | Completado en referencia |
 | WA-004 | P0 | Performance | Eliminar DynamoDB Scan del listado principal | Consultas usan Query y un patrón de claves documentado | Cuatro GSIs de acceso | Completado en referencia |
 | WA-005 | P0 | Performance | Eliminar agregación síncrona por Scan en `/metrics` | Métricas proceden de agregados incrementales o materializados | Tabla de métricas transaccional | Completado en referencia |
-| WA-006 | P1 | Reliability | Definir RTO y RPO | Documento aprobado con valores, responsables y supuestos | Requisitos de negocio | Pendiente |
-| WA-007 | P1 | Reliability | Activar PITR para entornos persistentes | Test CDK verifica `PointInTimeRecoverySpecification` | WA-006 | Pendiente |
-| WA-008 | P1 | Reliability | Crear y probar restauración | Runbook y evidencia de un restore exitoso | WA-007 | Pendiente |
-| WA-009 | P1 | Operational excellence | Definir SLO y error budget | SLO de disponibilidad, latencia y procesamiento asíncrono | Datos de carga y negocio | Pendiente |
+| WA-006 | P1 | Reliability | Definir RTO y RPO | Documento aprobado con valores, responsables y supuestos | Requisitos de negocio | Definido en referencia; pendiente aprobación |
+| WA-007 | P1 | Reliability | Activar PITR para entornos persistentes | Test CDK verifica `PointInTimeRecoverySpecification` | WA-006 | Completado en referencia |
+| WA-008 | P1 | Reliability | Crear y probar restauración | Runbook y evidencia de un restore exitoso | WA-007 | Runbook completado; restore real pendiente |
+| WA-009 | P1 | Operational excellence | Definir SLO y error budget | SLO de disponibilidad, latencia y procesamiento asíncrono | Datos de carga y negocio | Definido en referencia; pendiente baseline y aprobación |
 | WA-010 | P1 | Operational excellence | Asignar ownership | Matriz RACI o tabla con owner técnico, seguridad, coste y operación | Organización objetivo | Pendiente |
-| WA-011 | P1 | Cost optimization | Configurar AWS Budget y anomalías de coste | Evidencia de presupuesto, umbrales y receptores | Cuenta AWS de laboratorio | Pendiente |
+| WA-011 | P1 | Cost optimization | Configurar AWS Budget y anomalías de coste | Evidencia de presupuesto, umbrales y receptores | Cuenta AWS de laboratorio | Checklist completado; configuración de cuenta pendiente |
 | WA-012 | P1 | Security | Añadir throttling y protección frente a abuso | Límites explícitos en API Gateway; WAF evaluado si aplica | Perfil de tráfico | Pendiente |
 | WA-013 | P1 | Security | Añadir análisis de dependencias y secretos | Dependabot/CodeQL/secret scanning o herramienta equivalente | Política GitHub | Pendiente |
-| WA-014 | P1 | Operational excellence | Enrutar alarmas a un canal real | Una alarma de prueba llega a un receptor autorizado | SNS/Chatbot/PagerDuty o equivalente | Pendiente |
-| WA-015 | P1 | Reliability | Documentar estrategia regional | Decisión explícita: single-region recovery o multi-region | WA-006 | Pendiente |
+| WA-014 | P1 | Operational excellence | Enrutar alarmas a un canal real | Una alarma de prueba llega a un receptor autorizado | SNS/Chatbot/PagerDuty o equivalente | IaC opcional completada; receptor real pendiente |
+| WA-015 | P1 | Reliability | Documentar estrategia regional | Decisión explícita: single-region recovery o multi-region | WA-006 | Single-region documentado; decisión regional pendiente |
 | WA-016 | P2 | Performance | Implementar paginación con continuation token | `GET /events` nunca depende de límites estáticos o carga completa | WA-004 | Pendiente |
 | WA-017 | P2 | Performance | Ejecutar pruebas de carga | Informe con p50, p95, errores, throttles, backlog y coste estimado | Tráfico representativo | Pendiente |
 | WA-018 | P2 | Performance | Ajustar memoria, concurrencia y batch | Parámetros sustentados por mediciones y comparativa | WA-017 | Pendiente |
@@ -51,14 +51,14 @@ Este backlog convierte los hallazgos de `docs/well-architected-review.md` en acc
 Estos riesgos no deben confundirse con controles de producción completados:
 
 - El modo Docker local permanece sin autenticación cloud dentro de una red de laboratorio confiable.
-- Tabla DynamoDB eliminada al destruir el stack.
-- Sin PITR ni backup persistente.
-- Sin acciones de notificación para alarmas.
-- Logs con retención de un día.
+- El perfil efímero elimina las tablas al destruir el stack.
+- El perfil efímero no habilita PITR ni backup persistente.
+- Las alarmas no tienen acciones de notificación salvo que se configure un receptor explícito.
+- Los logs del perfil efímero tienen retención de un día.
 - Concurrencia reservada muy baja.
 - Sin paginación mediante continuation token.
 
-Los controles P0 se consideran completados en la implementación de referencia, pero requieren evidencia de despliegue, integración de identidades y pruebas operativas antes de aceptar usuarios o datos reales.
+Los controles P0 se consideran completados en la implementación de referencia. Los controles P1 de recuperación y operación están parcialmente implementados, pero requieren aprobación, despliegue y evidencia real antes de aceptar usuarios o datos reales.
 
 ## Definition of done para producción
 
