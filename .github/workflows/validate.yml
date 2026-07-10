@@ -62,3 +62,6 @@ jobs:
 
       - name: Enforce multi-account blueprint guardrails
         run: python scripts/check_multi_account_blueprint.py
+
+      - name: Enforce P0 production controls
+        run: python scripts/check_p0_controls.py
