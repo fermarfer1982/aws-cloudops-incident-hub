@@ -30,7 +30,8 @@ La demo es estática y no expone la red local ni una API AWS.
 - Perfil persistente opcional con PITR, Retain y logs de 30 días.
 - Routing opcional de alarmas mediante SNS.
 - GitHub Actions, OIDC, CodeQL, Dependabot, control de secretos y SBOM.
-- Generador de carga reproducible con p50, p95, p99 y throughput.
+- Baseline local validado con p50, p95, p99, throughput e integridad de paginación.
+- Workflow AWS efímero de rendimiento preparado con límites duros y limpieza automática.
 - Revisión AWS Well-Architected y blueprint multi-account.
 
 ## Arquitectura AWS de referencia
@@ -167,7 +168,9 @@ python3 scripts/run_load_test.py \
   --output artifacts/local-mixed-load-test.json
 ```
 
-El informe contiene throughput, errores, códigos HTTP y latencias p50, p95 y p99. La plantilla de evidencia está en [performance-baseline.md](docs/performance-baseline.md). No se han inventado resultados: el baseline representativo sigue pendiente de ejecución.
+El baseline local del 10 de julio de 2026 registró aproximadamente 158–159 lecturas por segundo y 150 peticiones por segundo con un 5% de escrituras, sin errores. El p95 máximo fue 141,59 ms. La validación recorrió 365 incidencias en cuatro páginas, con 365 IDs únicos y cero duplicados.
+
+Evidencia: [baseline local validado](docs/performance-baseline-local-2026-07-10.md).
 
 ## Perfiles CDK
 
@@ -182,6 +185,7 @@ cdk synth
 - PITR desactivado.
 - Logs de un día.
 - Sin SNS ni acciones de notificación.
+- Sin cliente OAuth de máquina para pruebas de carga.
 
 ### Persistente, opcional
 
@@ -198,6 +202,16 @@ cdk synth \
 - Alarmas ALARM y OK hacia SNS.
 
 El perfil persistente puede generar costes y no se activa en CI ni en el workflow efímero.
+
+### Rendimiento AWS efímero, solo bajo aprobación
+
+```bash
+cd infrastructure
+cdk synth \
+  -c enable_load_test_client=true
+```
+
+Este contexto añade un cliente Cognito temporal de `client_credentials`, con scopes de lectura y escritura y token de 15 minutos. Solo está previsto para el workflow manual de rendimiento; no se activa en la referencia normal.
 
 ## Seguridad y supply chain
 
@@ -241,11 +255,12 @@ python3 scripts/check_p0_controls.py
 python3 scripts/check_p1_controls.py
 python3 scripts/check_security_supply_chain.py
 python3 scripts/check_pagination_load_testing.py
+python3 scripts/check_aws_performance_workflow.py
 ```
 
-## Despliegue efímero con GitHub OIDC
+## Despliegues efímeros con GitHub OIDC
 
-El workflow manual:
+El workflow de smoke test manual:
 
 1. Exige confirmación textual.
 2. Obtiene credenciales STS mediante OIDC.
@@ -255,7 +270,21 @@ El workflow manual:
 6. Conserva evidencias durante siete días.
 7. Ejecuta `cdk destroy` y comprueba la eliminación.
 
+El workflow de rendimiento AWS está **preparado pero no ejecutado**. Añade:
+
+- Aprobación explícita y confirmación de controles de coste.
+- Duración máxima de 60 segundos.
+- Concurrencia máxima de 5.
+- Techo global máximo de 8 requests/s.
+- Escrituras sintéticas limitadas al 5%.
+- Token Cognito de máquina temporal y enmascarado.
+- Métricas nativas de API Gateway, Lambda, SQS y DynamoDB.
+- Evidencia saneada durante 14 días.
+- Destrucción obligatoria y verificación del borrado del stack.
+
 No se almacenan access keys AWS en GitHub. No se debe ejecutar una prueba de carga en AWS sin aprobación, presupuesto, límites de tráfico y limpieza.
+
+Guía: [prueba AWS efímera y controlada](docs/aws-performance-test.md).
 
 ## Documentación principal
 
@@ -266,6 +295,8 @@ No se almacenan access keys AWS en GitHub. No se debe ejecutar una prueba de car
 - [SLO provisionales](docs/service-level-objectives.md)
 - [Controles de coste](docs/cost-controls.md)
 - [Paginación y carga](docs/pagination-load-testing.md)
+- [Baseline local](docs/performance-baseline-local-2026-07-10.md)
+- [Prueba AWS controlada](docs/aws-performance-test.md)
 - [Well-Architected Review](docs/well-architected-review.md)
 - [Backlog Well-Architected](docs/well-architected-backlog.md)
 - [Arquitectura multi-account](docs/multi-account-production-architecture.md)
@@ -273,7 +304,7 @@ No se almacenan access keys AWS en GitHub. No se debe ejecutar una prueba de car
 
 ## Estado Well-Architected
 
-La referencia ya implementa autenticación, autorización, CORS, consultas sin Scan, métricas incrementales, PITR opcional, alarm routing opcional, throttling, supply-chain security y paginación.
+La referencia ya implementa autenticación, autorización, CORS, consultas sin Scan, métricas incrementales, PITR opcional, alarm routing opcional, throttling, supply-chain security, paginación y un baseline local validado.
 
 El workload continúa **sin declararse production-ready** hasta obtener evidencia real de:
 
@@ -281,7 +312,7 @@ El workload continúa **sin declararse production-ready** hasta obtener evidenci
 - Ownership aprobado.
 - AWS Budgets y Cost Anomaly Detection activos.
 - Receptor real de alarmas.
-- Baseline de rendimiento representativo.
+- Baseline AWS aprobado y artifact revisado.
 - Ajuste empírico de Lambda, SQS y throttling.
 - Game day y revisión Well-Architected posterior.
 
@@ -297,7 +328,10 @@ El workload continúa **sin declararse production-ready** hasta obtener evidenci
 - [x] PITR, RTO/RPO, SLO y alarm routing opcional.
 - [x] Throttling, CodeQL, Dependabot, secretos y SBOM.
 - [x] Paginación por cursor y framework de pruebas de carga.
-- [ ] Ejecutar baseline, analizar resultados y ajustar recursos.
+- [x] Baseline local validado y versionado.
+- [x] Workflow AWS de rendimiento efímero y controlado preparado.
+- [ ] Ejecutar el baseline AWS con aprobación, presupuesto y limpieza verificada.
+- [ ] Ajustar recursos únicamente a partir de evidencia AWS comparativa.
 - [ ] Obtener evidencias P1 reales de restore, costes, ownership y alarmas.
 
 ## Licencia
