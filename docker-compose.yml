@@ -7,7 +7,7 @@ services:
     user: root
 
     volumes:
-      - dynamodb_data:/home/dynamolocal/data
+      - dynamodb_data:/home/dynamodblocal/data
     healthcheck:
       test: ["CMD-SHELL", "curl -s http://localhost:8000/shell/ >/dev/null || exit 0"]
       interval: 10s
