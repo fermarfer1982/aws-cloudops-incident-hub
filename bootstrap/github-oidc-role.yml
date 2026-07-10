@@ -1,0 +1,85 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  GitHub Actions OIDC broker role for the AWS CloudOps Incident Hub. The role
+  can only be assumed from the aws-ephemeral GitHub environment and can only
+  delegate to the standard CDK bootstrap roles in one account and region.
+
+Parameters:
+  GitHubOidcProviderArn:
+    Type: String
+    Description: ARN of the existing token.actions.githubusercontent.com IAM OIDC provider
+  GitHubOwner:
+    Type: String
+    Default: fermarfer1982
+  GitHubRepository:
+    Type: String
+    Default: aws-cloudops-incident-hub
+  GitHubEnvironment:
+    Type: String
+    Default: aws-ephemeral
+  DeploymentRegion:
+    Type: String
+    Default: eu-west-1
+  BootstrapQualifier:
+    Type: String
+    Default: hnb659fds
+    AllowedPattern: "^[a-z0-9]{1,10}$"
+
+Resources:
+  GitHubActionsDeploymentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: cloudops-github-oidc-deploy
+      Description: Temporary GitHub OIDC identity for ephemeral CDK deployments
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref GitHubOidcProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub >-
+                  repo:${GitHubOwner}/${GitHubRepository}:environment:${GitHubEnvironment}
+      Policies:
+        - PolicyName: DelegateToCdkBootstrapRoles
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: AssumeStandardCdkBootstrapRoles
+                Effect: Allow
+                Action: sts:AssumeRole
+                Resource:
+                  - !Sub >-
+                      arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-${BootstrapQualifier}-deploy-role-${AWS::AccountId}-${DeploymentRegion}
+                  - !Sub >-
+                      arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-${BootstrapQualifier}-file-publishing-role-${AWS::AccountId}-${DeploymentRegion}
+                  - !Sub >-
+                      arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-${BootstrapQualifier}-image-publishing-role-${AWS::AccountId}-${DeploymentRegion}
+                  - !Sub >-
+                      arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-${BootstrapQualifier}-lookup-role-${AWS::AccountId}-${DeploymentRegion}
+              - Sid: ReadCdkBootstrapVersion
+                Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:ssm:${DeploymentRegion}:${AWS::AccountId}:parameter/cdk-bootstrap/${BootstrapQualifier}/version
+              - Sid: ReadDeploymentState
+                Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStackResources
+                  - cloudformation:GetTemplate
+                Resource: "*"
+
+Outputs:
+  RoleArn:
+    Description: Store this value as the AWS_DEPLOY_ROLE_ARN GitHub environment variable
+    Value: !GetAtt GitHubActionsDeploymentRole.Arn
+  ExpectedSubjectClaim:
+    Description: Exact GitHub OIDC subject allowed by the trust policy
+    Value: !Sub >-
+      repo:${GitHubOwner}/${GitHubRepository}:environment:${GitHubEnvironment}
