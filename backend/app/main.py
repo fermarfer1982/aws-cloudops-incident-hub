@@ -39,10 +39,10 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AWS CloudOps Incident Hub API",
-    version="0.2.0",
+    version="0.3.0",
     description=(
-        "Local-first incident API with an asynchronous EventBridge and SQS path "
-        "for AWS deployments."
+        "Local-first incident API. AWS deployments use Cognito JWT authorization "
+        "at API Gateway and asynchronous EventBridge/SQS processing."
     ),
     lifespan=lifespan,
 )

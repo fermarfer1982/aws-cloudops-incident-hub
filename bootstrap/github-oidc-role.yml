@@ -74,6 +74,16 @@ Resources:
                   - cloudformation:DescribeStackResources
                   - cloudformation:GetTemplate
                 Resource: "*"
+              - Sid: PublishSmokeEvent
+                Effect: Allow
+                Action: events:PutEvents
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:events:${DeploymentRegion}:${AWS::AccountId}:event-bus/cloudops-incident-hub
+              - Sid: VerifySmokeIncident
+                Effect: Allow
+                Action: dynamodb:GetItem
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:dynamodb:${DeploymentRegion}:${AWS::AccountId}:table/cloudops-incidents
 
 Outputs:
   RoleArn:

@@ -12,9 +12,15 @@ def get_template() -> Template:
 
 def test_expected_serverless_resources_are_created():
     template = get_template()
-    template.resource_count_is("AWS::DynamoDB::Table", 1)
+    template.resource_count_is("AWS::DynamoDB::Table", 2)
     template.resource_count_is("AWS::Lambda::Function", 2)
     template.resource_count_is("AWS::ApiGatewayV2::Api", 1)
+    template.resource_count_is("AWS::ApiGatewayV2::Authorizer", 1)
+    template.resource_count_is("AWS::ApiGatewayV2::Route", 5)
+    template.resource_count_is("AWS::Cognito::UserPool", 1)
+    template.resource_count_is("AWS::Cognito::UserPoolClient", 1)
+    template.resource_count_is("AWS::Cognito::UserPoolResourceServer", 1)
+    template.resource_count_is("AWS::Cognito::UserPoolDomain", 1)
     template.resource_count_is("AWS::Events::EventBus", 1)
     template.resource_count_is("AWS::Events::Rule", 1)
     template.resource_count_is("AWS::SQS::Queue", 2)
@@ -23,22 +29,57 @@ def test_expected_serverless_resources_are_created():
     template.resource_count_is("AWS::CloudWatch::Alarm", 4)
 
 
-def test_dynamodb_is_on_demand_and_ephemeral():
-    template = get_template()
-    template.has_resource_properties(
+def test_incident_table_uses_queryable_access_patterns():
+    resources = get_template().to_json()["Resources"]
+    incident_tables = [
+        resource["Properties"]
+        for resource in resources.values()
+        if resource["Type"] == "AWS::DynamoDB::Table"
+        and resource["Properties"].get("TableName") == "cloudops-incidents"
+    ]
+    assert len(incident_tables) == 1
+    table = incident_tables[0]
+    assert table["BillingMode"] == "PAY_PER_REQUEST"
+    assert table["SSESpecification"] == {"SSEEnabled": True}
+    assert {index["IndexName"] for index in table["GlobalSecondaryIndexes"]} == {
+        "incidents-by-time",
+        "incidents-by-site",
+        "incidents-by-status",
+        "incidents-by-severity",
+    }
+    assert all(
+        index["Projection"] == {"ProjectionType": "ALL"}
+        for index in table["GlobalSecondaryIndexes"]
+    )
+
+
+def test_metrics_table_has_group_and_name_key():
+    get_template().has_resource_properties(
         "AWS::DynamoDB::Table",
         {
+            "TableName": "cloudops-incident-metrics",
             "BillingMode": "PAY_PER_REQUEST",
-            "SSESpecification": {"SSEEnabled": True},
+            "KeySchema": [
+                {"AttributeName": "metric_group", "KeyType": "HASH"},
+                {"AttributeName": "metric_name", "KeyType": "RANGE"},
+            ],
         },
     )
-    template.has_resource(
-        "AWS::DynamoDB::Table",
-        {"DeletionPolicy": "Delete", "UpdateReplacePolicy": "Delete"},
-    )
 
 
-def test_lambdas_have_bounded_compute():
+def test_dynamodb_tables_are_ephemeral():
+    resources = get_template().to_json()["Resources"]
+    tables = [
+        resource
+        for resource in resources.values()
+        if resource["Type"] == "AWS::DynamoDB::Table"
+    ]
+    assert len(tables) == 2
+    assert all(table["DeletionPolicy"] == "Delete" for table in tables)
+    assert all(table["UpdateReplacePolicy"] == "Delete" for table in tables)
+
+
+def test_lambdas_have_bounded_compute_and_both_table_names():
     template = get_template()
     template.has_resource_properties(
         "AWS::Lambda::Function",
@@ -47,6 +88,14 @@ def test_lambdas_have_bounded_compute():
             "MemorySize": 256,
             "Runtime": "python3.13",
             "Architectures": ["arm64"],
+            "Environment": {
+                "Variables": Match.object_like(
+                    {
+                        "TABLE_NAME": Match.any_value(),
+                        "METRICS_TABLE_NAME": Match.any_value(),
+                    }
+                )
+            },
         },
     )
 
@@ -90,6 +139,58 @@ def test_eventbridge_rule_filters_incident_events():
             },
         },
     )
+
+
+def test_cognito_resource_server_defines_route_scopes():
+    get_template().has_resource_properties(
+        "AWS::Cognito::UserPoolResourceServer",
+        {
+            "Identifier": "cloudops-incident-hub",
+            "Scopes": Match.array_with(
+                [
+                    Match.object_like({"ScopeName": "incidents.read"}),
+                    Match.object_like({"ScopeName": "incidents.write"}),
+                    Match.object_like({"ScopeName": "incidents.manage"}),
+                ]
+            ),
+        },
+    )
+
+
+def test_only_health_route_is_public_and_other_routes_require_jwt_scopes():
+    resources = get_template().to_json()["Resources"]
+    routes = {
+        resource["Properties"]["RouteKey"]: resource["Properties"]
+        for resource in resources.values()
+        if resource["Type"] == "AWS::ApiGatewayV2::Route"
+    }
+
+    assert routes["GET /health"].get("AuthorizationType", "NONE") == "NONE"
+    expected_scopes = {
+        "POST /events": ["cloudops-incident-hub/incidents.write"],
+        "GET /events": ["cloudops-incident-hub/incidents.read"],
+        "PATCH /events/{incident_id}/status": [
+            "cloudops-incident-hub/incidents.manage"
+        ],
+        "GET /metrics": ["cloudops-incident-hub/incidents.read"],
+    }
+    for route_key, scopes in expected_scopes.items():
+        assert routes[route_key]["AuthorizationType"] == "JWT"
+        assert routes[route_key]["AuthorizationScopes"] == scopes
+        assert "AuthorizerId" in routes[route_key]
+
+
+def test_cors_uses_an_explicit_allowlist():
+    resources = get_template().to_json()["Resources"]
+    api = next(
+        resource["Properties"]
+        for resource in resources.values()
+        if resource["Type"] == "AWS::ApiGatewayV2::Api"
+    )
+    origins = api["CorsConfiguration"]["AllowOrigins"]
+    assert origins
+    assert "*" not in origins
+    assert "https://fermarfer1982.github.io" in origins
 
 
 def test_operational_alarms_are_named_and_ignore_missing_data():
@@ -136,24 +237,22 @@ def test_no_known_high_cost_resources_exist():
     assert found == set()
 
 
-def test_lambda_policy_is_scoped_to_project_resources():
-    template = get_template()
-    template.has_resource_properties(
-        "AWS::IAM::Policy",
-        {
-            "PolicyDocument": {
-                "Statement": Match.array_with(
-                    [
-                        Match.object_like(
-                            {
-                                "Effect": "Allow",
-                                "Action": Match.array_with(
-                                    ["dynamodb:GetItem", "dynamodb:PutItem"]
-                                ),
-                            }
-                        )
-                    ]
-                )
-            }
-        },
-    )
+def test_lambda_policies_allow_query_and_transactions_but_not_scan():
+    resources = get_template().to_json()["Resources"]
+    statements = []
+    for resource in resources.values():
+        if resource["Type"] != "AWS::IAM::Policy":
+            continue
+        statements.extend(resource["Properties"]["PolicyDocument"]["Statement"])
+
+    actions = set()
+    for statement in statements:
+        action = statement.get("Action", [])
+        if isinstance(action, str):
+            actions.add(action)
+        else:
+            actions.update(action)
+
+    assert "dynamodb:Query" in actions
+    assert "dynamodb:TransactWriteItems" in actions
+    assert "dynamodb:Scan" not in actions

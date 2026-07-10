@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import Counter
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -90,17 +89,4 @@ class IncidentService:
             raise
 
     def metrics(self) -> dict:
-        incidents = self.repository.list(limit=500)
-        status_counts = Counter(item["status"] for item in incidents)
-        severity_counts = Counter(item["severity"] for item in incidents)
-        site_counts = Counter(item["site"] for item in incidents)
-        return {
-            "total": len(incidents),
-            "open": status_counts["open"],
-            "investigating": status_counts["investigating"],
-            "resolved": status_counts["resolved"],
-            "critical": severity_counts["critical"],
-            "warning": severity_counts["warning"],
-            "info": severity_counts["info"],
-            "by_site": dict(site_counts.most_common()),
-        }
+        return self.repository.metrics()
