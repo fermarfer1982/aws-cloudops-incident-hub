@@ -30,9 +30,9 @@ Este backlog convierte los hallazgos de `docs/well-architected-review.md` en acc
 | WA-013 | P1 | Security | Añadir análisis de dependencias y secretos | Dependabot/CodeQL/secret scanning o herramienta equivalente | Política GitHub | Automatización completada; configuración y alertas reales pendientes |
 | WA-014 | P1 | Operational excellence | Enrutar alarmas a un canal real | Una alarma de prueba llega a un receptor autorizado | SNS/Chatbot/PagerDuty o equivalente | IaC opcional completada; receptor real pendiente |
 | WA-015 | P1 | Reliability | Documentar estrategia regional | Decisión explícita: single-region recovery o multi-region | WA-006 | Single-region documentado; decisión regional pendiente |
-| WA-016 | P2 | Performance | Implementar paginación con continuation token | `GET /events` nunca depende de límites estáticos o carga completa | WA-004 | Pendiente |
-| WA-017 | P2 | Performance | Ejecutar pruebas de carga | Informe con p50, p95, errores, throttles, backlog y coste estimado | Tráfico representativo | Pendiente |
-| WA-018 | P2 | Performance | Ajustar memoria, concurrencia y batch | Parámetros sustentados por mediciones y comparativa | WA-017 | Pendiente |
+| WA-016 | P2 | Performance | Implementar paginación con continuation token | `GET /events` recupera páginas acotadas mediante cursor y sin Scan | WA-004 | Completado en referencia; integración de cliente incluida |
+| WA-017 | P2 | Performance | Ejecutar pruebas de carga | Informe con p50, p95, errores, throttles, backlog y coste estimado | Tráfico representativo | Harness y plantilla completados; ejecución representativa pendiente |
+| WA-018 | P2 | Performance | Ajustar memoria, concurrencia y batch | Parámetros sustentados por mediciones y comparativa | WA-017 | Pendiente de baseline |
 | WA-019 | P2 | Operational excellence | Ejecutar game day | Evidencia de fallo Lambda, backlog, DLQ y recuperación | WA-014 | Pendiente |
 | WA-020 | P2 | Operational excellence | Añadir runbook de release y rollback | Criterios de rollback y pasos comprobables | Estrategia de release | Pendiente |
 | WA-021 | P2 | Security | Definir clasificación y retención de datos | Tabla de categorías, retención, cifrado y borrado | Requisitos legales | Pendiente |
@@ -58,7 +58,7 @@ Estos riesgos no deben confundirse con controles de producción completados:
 - Concurrencia reservada muy baja.
 - Los límites de throttling no se han validado con tráfico representativo.
 - GitHub push protection y otras opciones de seguridad requieren evidencia de configuración del repositorio.
-- Sin paginación mediante continuation token.
+- El framework de carga existe, pero todavía no hay un baseline representativo aprobado.
 
 Los controles P0 se consideran completados en la implementación de referencia. Los controles P1 de recuperación, operación y seguridad disponen de IaC, automatización o documentación parcial, pero requieren aprobación, despliegue y evidencia real antes de aceptar usuarios o datos reales.
 
@@ -73,7 +73,8 @@ El workload no debe describirse como production-ready hasta que, como mínimo:
 5. No existan scans completos en rutas operativas principales y se haya probado paginación con carga representativa.
 6. Se hayan configurado controles de coste de cuenta.
 7. CodeQL, Dependabot, secret scanning y SBOM produzcan evidencia real y tengan un proceso de triage.
-8. La revisión Well-Architected se repita con evidencias de un entorno real.
+8. El baseline justifique memoria, concurrencia, batch y throttling.
+9. La revisión Well-Architected se repita con evidencias de un entorno real.
 
 ## Cadencia de revisión
 
