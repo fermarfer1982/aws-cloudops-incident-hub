@@ -65,3 +65,6 @@ jobs:
 
       - name: Enforce P0 production controls
         run: python scripts/check_p0_controls.py
+
+      - name: Enforce P1 reliability and operations controls
+        run: python scripts/check_p1_controls.py
