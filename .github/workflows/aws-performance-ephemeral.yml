@@ -281,9 +281,11 @@ jobs:
             "$APIURL/events?limit=25" > evidence/incidents-page.json
 
       - name: Collect native AWS service metrics
-        if: always() && steps.deploy.outcome == 'success' && env.TEST_START_UTC != ''
+        if: always() && steps.deploy.outcome == 'success' && steps.load_test.outcome != 'skipped'
         continue-on-error: true
         run: |
+          test -n "$TEST_START_UTC"
+          test -n "$TEST_END_UTC"
           sleep 120
           python scripts/collect_aws_performance_evidence.py \
             --region "$AWS_REGION" \
