@@ -1,4 +1,4 @@
-.PHONY: up down logs test lint synth validate seed clean
+.PHONY: up down logs test lint synth validate seed simulate-async clean
 
 up:
 	docker compose up -d --build
@@ -23,6 +23,9 @@ validate: lint test synth
 
 seed:
 	bash scripts/seed_demo.sh
+
+simulate-async:
+	bash scripts/simulate_sqs_event.sh
 
 clean:
 	docker compose down -v
