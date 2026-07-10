@@ -11,6 +11,7 @@ from aws_cdk import (
 )
 from aws_cdk import aws_apigatewayv2 as apigwv2
 from aws_cdk import aws_apigatewayv2_integrations as integrations
+from aws_cdk import aws_cloudwatch as cloudwatch
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_events as events
 from aws_cdk import aws_events_targets as event_targets
@@ -191,8 +192,158 @@ class CloudOpsIncidentHubStack(Stack):
             ),
         )
 
+        api_error_alarm = api_function.metric_errors(
+            period=Duration.minutes(5),
+            statistic="Sum",
+        ).create_alarm(
+            self,
+            "ApiFunctionErrorsAlarm",
+            alarm_name="cloudops-api-function-errors",
+            alarm_description="The ingestion API Lambda returned one or more errors in five minutes.",
+            threshold=1,
+            evaluation_periods=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+        )
+        processor_error_alarm = processor_function.metric_errors(
+            period=Duration.minutes(5),
+            statistic="Sum",
+        ).create_alarm(
+            self,
+            "ProcessorFunctionErrorsAlarm",
+            alarm_name="cloudops-processor-function-errors",
+            alarm_description="The asynchronous incident processor returned an error.",
+            threshold=1,
+            evaluation_periods=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+        )
+        queue_age_alarm = processing_queue.metric_approximate_age_of_oldest_message(
+            period=Duration.minutes(5),
+            statistic="Maximum",
+        ).create_alarm(
+            self,
+            "ProcessingQueueAgeAlarm",
+            alarm_name="cloudops-processing-queue-age",
+            alarm_description="The oldest processing message has been waiting for at least five minutes.",
+            threshold=300,
+            evaluation_periods=2,
+            datapoints_to_alarm=2,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+        )
+        dlq_alarm = processing_dlq.metric_approximate_number_of_messages_visible(
+            period=Duration.minutes(1),
+            statistic="Maximum",
+        ).create_alarm(
+            self,
+            "ProcessingDlqMessagesAlarm",
+            alarm_name="cloudops-processing-dlq-messages",
+            alarm_description="At least one event requires manual investigation in the dead-letter queue.",
+            threshold=1,
+            evaluation_periods=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+        )
+
+        dashboard = cloudwatch.Dashboard(
+            self,
+            "OperationsDashboard",
+            dashboard_name="cloudops-incident-hub-operations",
+            start="-PT3H",
+        )
+        dashboard.add_widgets(
+            cloudwatch.TextWidget(
+                markdown=(
+                    "# AWS CloudOps Incident Hub\n"
+                    "Operational signals derived exclusively from AWS service metrics. "
+                    "No custom metrics are emitted by this laboratory."
+                ),
+                width=24,
+                height=2,
+            ),
+            cloudwatch.GraphWidget(
+                title="Lambda errors and throttles",
+                left=[
+                    api_function.metric_errors(
+                        period=Duration.minutes(5), statistic="Sum", label="API errors"
+                    ),
+                    processor_function.metric_errors(
+                        period=Duration.minutes(5), statistic="Sum", label="Processor errors"
+                    ),
+                ],
+                right=[
+                    api_function.metric_throttles(
+                        period=Duration.minutes(5), statistic="Sum", label="API throttles"
+                    ),
+                    processor_function.metric_throttles(
+                        period=Duration.minutes(5),
+                        statistic="Sum",
+                        label="Processor throttles",
+                    ),
+                ],
+                width=12,
+            ),
+            cloudwatch.GraphWidget(
+                title="Lambda p95 duration",
+                left=[
+                    api_function.metric_duration(
+                        period=Duration.minutes(5), statistic="p95", label="API p95"
+                    ),
+                    processor_function.metric_duration(
+                        period=Duration.minutes(5), statistic="p95", label="Processor p95"
+                    ),
+                ],
+                width=12,
+            ),
+            cloudwatch.GraphWidget(
+                title="Processing queue backlog",
+                left=[
+                    processing_queue.metric_approximate_number_of_messages_visible(
+                        period=Duration.minutes(5), statistic="Maximum", label="Visible messages"
+                    )
+                ],
+                right=[
+                    processing_queue.metric_approximate_age_of_oldest_message(
+                        period=Duration.minutes(5), statistic="Maximum", label="Oldest message (s)"
+                    )
+                ],
+                width=12,
+            ),
+            cloudwatch.SingleValueWidget(
+                title="Dead-letter queue",
+                metrics=[
+                    processing_dlq.metric_approximate_number_of_messages_visible(
+                        period=Duration.minutes(1), statistic="Maximum", label="Messages awaiting triage"
+                    )
+                ],
+                width=12,
+            ),
+            cloudwatch.AlarmWidget(
+                title="API errors alarm",
+                alarm=api_error_alarm,
+                width=6,
+            ),
+            cloudwatch.AlarmWidget(
+                title="Processor errors alarm",
+                alarm=processor_error_alarm,
+                width=6,
+            ),
+            cloudwatch.AlarmWidget(
+                title="Queue age alarm",
+                alarm=queue_age_alarm,
+                width=6,
+            ),
+            cloudwatch.AlarmWidget(
+                title="DLQ alarm",
+                alarm=dlq_alarm,
+                width=6,
+            ),
+        )
+
         CfnOutput(self, "ApiUrl", value=api.api_endpoint)
         CfnOutput(self, "TableName", value=table.table_name)
         CfnOutput(self, "EventBusName", value=event_bus.event_bus_name)
         CfnOutput(self, "ProcessingQueueName", value=processing_queue.queue_name)
         CfnOutput(self, "ProcessingDlqName", value=processing_dlq.queue_name)
+        CfnOutput(self, "OperationsDashboardName", value=dashboard.dashboard_name)
