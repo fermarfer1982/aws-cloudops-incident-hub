@@ -24,6 +24,7 @@ Plataforma serverless para recibir, clasificar y gestionar incidencias de infrae
 - Despliegue efímero manual con GitHub OIDC y credenciales STS temporales.
 - Destrucción automática y workflow independiente de limpieza de emergencia.
 - Autoevaluación AWS Well-Architected con riesgos, evidencias y backlog de remediación.
+- Blueprint multi-account con Organizations, Identity Center, cuentas fundacionales, SCP y promoción Dev → Stage → Prod.
 
 ## Arquitectura MVP
 
@@ -147,6 +148,12 @@ La estructura y trazabilidad de la revisión Well-Architected se validan con:
 python3 scripts/check_well_architected_review.py
 ```
 
+El blueprint multi-account tiene una comprobación ejecutable independiente:
+
+```bash
+python3 scripts/check_multi_account_blueprint.py
+```
+
 ## Endpoints
 
 | Método | Ruta | Función |
@@ -228,6 +235,41 @@ Documentación:
 - [Backlog de remediación](docs/well-architected-backlog.md).
 - [ADR-005: enfoque de autoevaluación](docs/adr/005-well-architected-self-assessment.md).
 
+## Arquitectura multi-account de producción
+
+El target state de producción separa gobierno, seguridad, logging, plataforma y workloads mediante AWS Organizations:
+
+```mermaid
+flowchart TB
+    ROOT[AWS Organizations]
+    ROOT --> SEC[Security OU]
+    ROOT --> INFRA[Infrastructure OU]
+    ROOT --> NPROD[Workloads-NonProduction OU]
+    ROOT --> PROD[Workloads-Production OU]
+    ROOT --> SBOX[Sandbox OU]
+
+    SEC --> LOG[Log Archive]
+    SEC --> AUDIT[Security Tooling]
+    INFRA --> SHARED[Shared Services]
+    INFRA --> NET[Network]
+    NPROD --> DEV[CloudOps Dev]
+    NPROD --> STAGE[CloudOps Stage]
+    PROD --> PRD[CloudOps Prod]
+    SBOX --> SBX[Sandbox Users]
+```
+
+El management account queda reservado para Organizations, billing, Identity Center e integraciones organizativas. Los usuarios acceden mediante IAM Identity Center; los pipelines usan roles OIDC separados por cuenta y promocionan artefactos inmutables de Dev a Stage y Prod.
+
+Esta fase es exclusivamente documental: no crea cuentas, OUs, Control Tower, SCP, servicios de seguridad ni costes AWS.
+
+Documentación:
+
+- [Arquitectura multi-account completa](docs/multi-account-production-architecture.md).
+- [Matriz de controles](docs/multi-account-control-matrix.md).
+- [Plan de migración por fases](docs/multi-account-migration-plan.md).
+- [Blueprint estructurado](governance/organization-blueprint.json).
+- [ADR-006: landing zone multi-account](docs/adr/006-multi-account-production-landing-zone.md).
+
 ## GitHub Pages
 
 El workflow `.github/workflows/pages.yml` publica automáticamente el directorio `frontend`.
@@ -242,7 +284,9 @@ Después de subir el repositorio:
 
 La ejecución local y GitHub Pages no consumen servicios de AWS. La plantilla cloud está diseñada para despliegues efímeros y evita servicios con coste fijo o fácil de olvidar. No se mantiene un stack desplegado; cualquier despliegue real debe revisarse y destruirse al terminar la demostración.
 
-Consulta [docs/cost-control.md](docs/cost-control.md), [docs/event-driven-processing.md](docs/event-driven-processing.md), [docs/observability.md](docs/observability.md), [docs/github-oidc-deployment.md](docs/github-oidc-deployment.md) y [docs/well-architected-review.md](docs/well-architected-review.md).
+La arquitectura multi-account representa un target state de producción. Implementarla sí crearía cuentas y servicios persistentes, por lo que requeriría una estimación separada, AWS Budgets, detección de anomalías y gobierno financiero.
+
+Consulta [docs/cost-control.md](docs/cost-control.md), [docs/event-driven-processing.md](docs/event-driven-processing.md), [docs/observability.md](docs/observability.md), [docs/github-oidc-deployment.md](docs/github-oidc-deployment.md), [docs/well-architected-review.md](docs/well-architected-review.md) y [docs/multi-account-production-architecture.md](docs/multi-account-production-architecture.md).
 
 ## Roadmap
 
@@ -256,7 +300,7 @@ Consulta [docs/cost-control.md](docs/cost-control.md), [docs/event-driven-proces
 - [x] CloudWatch dashboard, alarmas y runbook operacional.
 - [x] GitHub OIDC para despliegue temporal y limpieza de emergencia.
 - [x] Well-Architected review y backlog de remediación.
-- [ ] Arquitectura multi-account de producción.
+- [x] Arquitectura multi-account de producción y plan de migración.
 
 ## Licencia
 
