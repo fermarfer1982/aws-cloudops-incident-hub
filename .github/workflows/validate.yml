@@ -41,7 +41,7 @@ jobs:
 
       - name: Test pagination contract
         env:
-          PYTHONPATH: backend
+          PYTHONPATH: backend:.
           AWS_DEFAULT_REGION: eu-west-1
           AWS_ACCESS_KEY_ID: testing
           AWS_SECRET_ACCESS_KEY: testing
@@ -49,7 +49,7 @@ jobs:
 
       - name: Test load-report calculations
         env:
-          PYTHONPATH: backend
+          PYTHONPATH: backend:.
           AWS_DEFAULT_REGION: eu-west-1
           AWS_ACCESS_KEY_ID: testing
           AWS_SECRET_ACCESS_KEY: testing
@@ -57,7 +57,7 @@ jobs:
 
       - name: Test application
         env:
-          PYTHONPATH: backend
+          PYTHONPATH: backend:.
           AWS_DEFAULT_REGION: eu-west-1
           AWS_ACCESS_KEY_ID: testing
           AWS_SECRET_ACCESS_KEY: testing
