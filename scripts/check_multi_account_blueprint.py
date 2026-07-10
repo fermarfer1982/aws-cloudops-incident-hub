@@ -203,8 +203,13 @@ def validate_documents(
     ):
         require(phrase in architecture, f"Architecture missing concept: {phrase}")
 
+    normalized_architecture = architecture.lower()
     for account in REQUIRED_ACCOUNTS:
-        require(account in architecture.lower(), f"Architecture missing account: {account}")
+        display_name = account.replace("-", " ")
+        require(
+            display_name in normalized_architecture,
+            f"Architecture missing account: {account}",
+        )
 
     for control_prefix in (
         "ORG-",
