@@ -56,3 +56,6 @@ jobs:
 
       - name: Enforce OIDC deployment guardrails
         run: python scripts/check_oidc_workflows.py
+
+      - name: Enforce Well-Architected review guardrails
+        run: python scripts/check_well_architected_review.py
