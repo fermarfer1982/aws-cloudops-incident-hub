@@ -5,7 +5,7 @@
 
 Plataforma serverless para recibir, clasificar y gestionar incidencias de infraestructura. El proyecto demuestra arquitectura AWS, Infrastructure as Code, seguridad, resiliencia, observabilidad, CI/CD y gobierno de costes.
 
-> El laboratorio funciona en Docker y la demo pública usa datos simulados en GitHub Pages. La arquitectura AWS puede desplegarse de forma efímera, pero no se mantiene ningún stack activo por defecto.
+> El laboratorio funciona en Docker y la demo pública usa datos simulados en GitHub Pages. La arquitectura AWS puede desplegarse de forma efímera y dispone de un perfil persistente opcional, pero no mantiene ningún stack activo por defecto.
 
 ## Demo pública
 
@@ -24,7 +24,10 @@ La demo es estática y no expone la red local ni una API AWS.
 - Idempotencia y respuestas parciales de lotes SQS.
 - DynamoDB Query mediante GSIs por fecha, sede, estado y severidad.
 - Métricas incrementales actualizadas con transacciones DynamoDB.
-- CloudWatch dashboard, alarmas y runbook de DLQ.
+- CloudWatch dashboard, alarmas y runbooks operativos.
+- Perfil persistente opcional con DynamoDB PITR, recursos retenidos y logs de 30 días.
+- Routing opcional de alarmas mediante SNS y email confirmado.
+- Objetivos RTO/RPO y SLO versionados.
 - AWS CDK, CloudFormation, tests y guardrails de coste y seguridad.
 - GitHub Actions con OIDC y credenciales STS temporales.
 - Despliegue efímero, pruebas de humo y destrucción automática.
@@ -48,6 +51,7 @@ flowchart LR
     L2 --> CW
     Q --> CW
     DLQ --> CW
+    CW -. opcional .-> SNS[SNS operational topic]
 ```
 
 El API cloud aplica estos scopes antes de invocar Lambda:
@@ -102,16 +106,14 @@ http://IP_DEL_SERVIDOR:8081
 
 En **Fuente de datos**, selecciona **API local**.
 
-### Cambio de esquema local v0.3
-
-Esta fase utiliza tablas nuevas para evitar modificar in-place la tabla anterior de DynamoDB Local:
+### Esquema local actual
 
 ```text
 cloudops-incidents-v2
 cloudops-incident-metrics-v2
 ```
 
-Los datos antiguos permanecen en el volumen, pero la versión nueva no los consulta. Carga nuevamente las incidencias de ejemplo:
+Cargar incidencias de ejemplo:
 
 ```bash
 bash scripts/seed_demo.sh
@@ -176,6 +178,37 @@ La tabla de incidencias mantiene `incident_id` como clave primaria y define cuat
 
 Los listados utilizan `Query`, no `Scan`. Una segunda tabla mantiene contadores globales y por sede. La creación de incidencias y los cambios de estado actualizan datos y contadores mediante transacciones.
 
+## Perfiles CDK
+
+### Efímero, por defecto
+
+```bash
+cd infrastructure
+cdk synth
+```
+
+- Tablas y logs se eliminan con el stack.
+- PITR desactivado.
+- Logs de un día.
+- Sin SNS ni acciones de notificación.
+
+### Persistente, opcional
+
+```bash
+cd infrastructure
+cdk synth \
+  -c persistent_environment=true \
+  -c alarm_notification_email=ops@example.com
+```
+
+- PITR habilitado para ambas tablas.
+- Tablas y log groups con `Retain`.
+- Logs de 30 días.
+- Las cuatro alarmas publican estados ALARM y OK en SNS.
+- El receptor debe confirmar la suscripción por email.
+
+El perfil persistente puede generar costes y no se activa en CI ni en el workflow efímero.
+
 ## Desarrollo y validación
 
 ```bash
@@ -189,7 +222,7 @@ pytest -q tests
 
 cd infrastructure
 PYTHONPATH=. python -m pytest -q tests
-cdk synth
+cd ..
 ```
 
 Guardrails ejecutables:
@@ -200,6 +233,7 @@ python3 scripts/check_oidc_workflows.py
 python3 scripts/check_well_architected_review.py
 python3 scripts/check_multi_account_blueprint.py
 python3 scripts/check_p0_controls.py
+python3 scripts/check_p1_controls.py
 ```
 
 La CI falla si detecta, entre otros problemas:
@@ -210,7 +244,8 @@ La CI falla si detecta, entre otros problemas:
 - Pérdida de artefactos Well-Architected o multi-account.
 - CORS comodín.
 - Rutas cloud sin scopes JWT.
-- Uso de DynamoDB Scan en las rutas operativas.
+- Uso de DynamoDB Scan en rutas operativas.
+- Pérdida de PITR, retención, alarm routing, RTO/RPO, SLO o runbooks P1.
 
 ## Despliegue efímero con GitHub OIDC
 
@@ -219,19 +254,16 @@ El workflow **Deploy ephemeral AWS lab**:
 1. Exige confirmación manual.
 2. Obtiene credenciales temporales mediante OIDC.
 3. Ejecuta tests, CDK synth y guardrails.
-4. Despliega el stack.
-5. Comprueba que `/health` funciona.
-6. Comprueba que `/events` rechaza una petición anónima.
-7. Inyecta un evento sintético en EventBridge.
-8. Verifica su persistencia en DynamoDB.
-9. Conserva evidencias durante siete días.
-10. Ejecuta `cdk destroy` y comprueba la eliminación.
+4. Despliega el stack efímero.
+5. Comprueba `/health` y la frontera JWT.
+6. Inyecta un evento sintético en EventBridge.
+7. Verifica su persistencia en DynamoDB.
+8. Conserva evidencias durante siete días.
+9. Ejecuta `cdk destroy` y comprueba la eliminación.
 
-Existe además **Destroy ephemeral AWS lab** como mecanismo de limpieza de emergencia.
+Existe además **Destroy ephemeral AWS lab** como mecanismo de limpieza de emergencia. No se almacenan access keys AWS en GitHub.
 
-No se almacenan access keys AWS en GitHub. Mantener el código y los workflows sin ejecutarlos no crea recursos AWS.
-
-## Observabilidad
+## Observabilidad y recuperación
 
 La plantilla crea el dashboard `cloudops-incident-hub-operations` y alarmas para:
 
@@ -245,17 +277,19 @@ Documentación:
 - [Diseño de observabilidad](docs/observability.md).
 - [Runbook de la DLQ](docs/runbook-dlq.md).
 - [Procesamiento event-driven](docs/event-driven-processing.md).
+- [Controles P1](docs/p1-reliability-operations.md).
+- [Objetivos RTO/RPO](docs/recovery-objectives.md).
+- [Runbook de restauración DynamoDB](docs/runbook-dynamodb-restore.md).
+- [SLO provisionales](docs/service-level-objectives.md).
+- [Controles de coste](docs/cost-controls.md).
+
+Los targets iniciales son RPO de 15 minutos y RTO single-region de 60 minutos. Son objetivos de ingeniería pendientes de validación mediante un restore real; no son un SLA.
 
 ## AWS Well-Architected
 
-La revisión versionada evalúa los seis pilares y separa:
+WA-001 a WA-005 están completados en la implementación de referencia. WA-006, WA-007, WA-008, WA-009, WA-011, WA-014 y WA-015 tienen ahora documentación o IaC parcial, pero siguen pendientes aprobaciones, configuración de cuenta y evidencia operativa real.
 
-- Controles implementados en la referencia.
-- Riesgos aceptados únicamente para el laboratorio.
-- Evidencia que todavía debe obtenerse en AWS.
-- Bloqueadores pendientes para producción.
-
-WA-001 a WA-005 están completados en la implementación de referencia. El workload sigue **sin estar preparado para producción** porque permanecen abiertos RTO/RPO, PITR y restore, SLO y ownership, alarm routing, budgets, protección frente a abuso, supply-chain security, paginación y pruebas de carga.
+El workload continúa **sin estar preparado para producción**. Permanecen abiertos ownership, restore probado, budget activo, protección frente a abuso, supply-chain security, paginación, carga y tuning empírico.
 
 - [Revisión completa](docs/well-architected-review.md).
 - [Backlog de remediación](docs/well-architected-backlog.md).
@@ -263,19 +297,7 @@ WA-001 a WA-005 están completados en la implementación de referencia. El workl
 
 ## Arquitectura multi-account
 
-El target state separa:
-
-- Management.
-- Log Archive.
-- Security Tooling.
-- Shared Services.
-- Network.
-- CloudOps Dev.
-- CloudOps Stage.
-- CloudOps Prod.
-- Sandbox.
-
-Los usuarios accederían mediante IAM Identity Center y los pipelines utilizarían roles OIDC separados por cuenta. Esta arquitectura es un blueprint documental y no crea cuentas ni activa Control Tower.
+El target state separa Management, Log Archive, Security Tooling, Shared Services, Network, CloudOps Dev, Stage, Prod y Sandbox. Los usuarios accederían mediante IAM Identity Center y los pipelines utilizarían roles OIDC separados por cuenta.
 
 - [Arquitectura multi-account](docs/multi-account-production-architecture.md).
 - [Matriz de controles](docs/multi-account-control-matrix.md).
@@ -284,7 +306,7 @@ Los usuarios accederían mediante IAM Identity Center y los pipelines utilizarí
 
 ## Coste
 
-El modo local y GitHub Pages no consumen servicios AWS. El despliegue AWS es opcional y efímero. Un despliegue real puede generar cargos por Cognito, API Gateway, Lambda, EventBridge, SQS, DynamoDB, CloudWatch y recursos de bootstrap; debe realizarse con presupuestos, alertas y revisión posterior.
+El modo local y GitHub Pages no consumen servicios AWS. El despliegue AWS es opcional. Un despliegue persistente puede generar cargos por PITR, logs retenidos, CloudWatch, SNS y otros servicios. AWS Budgets y Cost Anomaly Detection deben configurarse a nivel de cuenta antes de activarlo.
 
 ## Roadmap
 
@@ -298,7 +320,9 @@ El modo local y GitHub Pages no consumen servicios AWS. El despliegue AWS es opc
 - [x] Arquitectura multi-account y plan de migración.
 - [x] Cognito, scopes JWT y CORS restringido.
 - [x] DynamoDB Query y métricas incrementales sin Scan.
-- [ ] Controles P1: recuperación, operación, costes y seguridad adicional.
+- [x] Referencia P1: PITR, retención, RTO/RPO, SLO y alarm routing opcional.
+- [ ] Evidencia P1: restore real, ownership, budgets activos y estrategia regional aprobada.
+- [ ] Seguridad P1: throttling, protección frente a abuso y supply-chain security.
 - [ ] Paginación, carga y tuning empírico.
 
 ## Licencia
