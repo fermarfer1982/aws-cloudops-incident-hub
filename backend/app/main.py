@@ -3,12 +3,21 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
 
 from .config import settings
-from .models import EventCreate, Incident, IncidentStatus, Metrics, Severity, StatusUpdate
+from .models import (
+    EventAccepted,
+    EventCreate,
+    Incident,
+    IncidentStatus,
+    Metrics,
+    Severity,
+    StatusUpdate,
+)
+from .publisher import EventPublisher
 from .repository import IncidentRepository
 from .service import IncidentNotFoundError, IncidentService
 
@@ -18,7 +27,8 @@ logging.basicConfig(
 )
 
 repository = IncidentRepository()
-service = IncidentService(repository)
+publisher = EventPublisher() if settings.event_bus_name else None
+service = IncidentService(repository, publisher=publisher)
 
 
 @asynccontextmanager
@@ -29,8 +39,11 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AWS CloudOps Incident Hub API",
-    version="0.1.0",
-    description="Zero-cost local MVP designed for deployment on AWS Lambda and API Gateway.",
+    version="0.2.0",
+    description=(
+        "Local-first incident API with an asynchronous EventBridge and SQS path "
+        "for AWS deployments."
+    ),
     lifespan=lifespan,
 )
 
@@ -49,15 +62,28 @@ def get_service() -> IncidentService:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "service": "cloudops-incident-hub"}
+    mode = "asynchronous" if service.publisher is not None else "synchronous-local"
+    return {
+        "status": "ok",
+        "service": "cloudops-incident-hub",
+        "ingestion_mode": mode,
+    }
 
 
-@app.post("/events", response_model=Incident, status_code=status.HTTP_201_CREATED)
+@app.post(
+    "/events",
+    response_model=Incident | EventAccepted,
+    status_code=status.HTTP_201_CREATED,
+)
 def create_event(
     event: EventCreate,
+    response: Response,
     incident_service: IncidentService = Depends(get_service),
 ) -> dict:
-    return incident_service.create(event)
+    result = incident_service.ingest(event)
+    if result.get("mode") == "asynchronous":
+        response.status_code = status.HTTP_202_ACCEPTED
+    return result
 
 
 @app.get("/events", response_model=list[Incident])
