@@ -155,4 +155,8 @@ These are engineering gates aligned with the provisional SLO. They are not a con
 
 ## Current evidence status
 
-The harness, pagination tests and CloudFormation controls are implemented in the repository. A representative baseline has not yet been executed and approved, so WA-017 and WA-018 remain operationally open.
+A validated local baseline was executed on 2026-07-10. It recorded approximately 158–159 read requests per second and 150 mixed requests per second, with 0% errors and p95 latency below 142 ms. A complete 365-item dataset was traversed in four pages with zero duplicate IDs, and the materialized counters matched the incident total.
+
+The full evidence record is available in [Local performance baseline — 2026-07-10](performance-baseline-local-2026-07-10.md).
+
+WA-016 is complete. WA-017 has local laboratory evidence but remains open for an approved AWS baseline. WA-018 remains open until AWS measurements justify changes to Lambda, SQS or API throttling.
