@@ -36,6 +36,9 @@ jobs:
       - name: Scan repository for common secret patterns
         run: python scripts/check_repository_secrets.py
 
+      - name: Validate load-test CLI
+        run: python scripts/run_load_test.py --help
+
       - name: Test application
         env:
           PYTHONPATH: backend
@@ -74,3 +77,6 @@ jobs:
 
       - name: Enforce operational security and supply-chain controls
         run: python scripts/check_security_supply_chain.py
+
+      - name: Enforce pagination and load-testing controls
+        run: python scripts/check_pagination_load_testing.py
