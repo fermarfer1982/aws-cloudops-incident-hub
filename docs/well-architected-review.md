@@ -10,21 +10,15 @@
 - **Environment assessed:** Local zero-cost laboratory plus the proposed ephemeral AWS architecture
 - **Production readiness:** Not production-ready
 
-> This document is a technical self-assessment, not an AWS Well-Architected Tool review and not an external audit. Findings are based on the code, infrastructure definitions, workflows, tests, runbooks, and architectural decisions stored in this repository.
+> This document is a technical self-assessment, not an AWS Well-Architected Tool review and not an external audit. Findings are based on evidence versioned in this repository. A control marked as completed in the reference implementation still requires deployment evidence and operational validation before production use.
 
 ## Scope and assumptions
 
-The reviewed workload accepts infrastructure incidents, classifies them, and persists them. The AWS design uses API Gateway, Lambda, EventBridge, SQS, a Dead Letter Queue, DynamoDB, CloudWatch, and GitHub Actions with OIDC for temporary deployments.
+The workload receives infrastructure incidents and processes them through API Gateway, Lambda, EventBridge, SQS, a Dead Letter Queue, DynamoDB and CloudWatch. The AWS reference now includes Amazon Cognito, JWT route scopes, explicit CORS origins, query-oriented DynamoDB indexes and transactional metric aggregates.
 
-The local implementation uses Docker, FastAPI, and DynamoDB Local. The public GitHub Pages dashboard uses demonstration data and does not expose the local network.
+The local implementation uses Docker, FastAPI and DynamoDB Local. Local mode deliberately remains unauthenticated inside the trusted development network. The public GitHub Pages dashboard contains demonstration data only.
 
-The following assumptions constrain the conclusions:
-
-- The workload is currently a portfolio laboratory, not a business-critical production service.
-- The AWS stack is designed to be deployed temporarily and destroyed after validation.
-- No persistent production traffic profile, RTO, RPO, SLO, compliance regime, or data classification has been approved.
-- A real AWS deployment may incur charges. The repository does not claim a mathematical guarantee of zero AWS cost.
-- Findings marked **Accepted for laboratory** must be remediated before a production launch.
+No persistent production traffic profile, RTO, RPO, SLO, compliance regime, data classification or formal ownership model has been approved. A real AWS deployment may incur charges.
 
 ## Rating model
 
@@ -32,23 +26,23 @@ The following assumptions constrain the conclusions:
 |---|---|
 | Low risk | Controls are appropriate for the current scope; minor improvements remain. |
 | Medium risk | Important controls exist, but one or more material gaps remain. |
-| High risk | A production launch would expose an unacceptable failure, security, or governance risk. |
-| Not assessed | Evidence or requirements are insufficient to make a defensible conclusion. |
+| High risk | A production launch would expose an unacceptable failure, security or governance risk. |
+| Not assessed | Evidence or requirements are insufficient for a defensible conclusion. |
 
 ## Executive summary
 
 | Pillar | Current rating | Main strength | Main risk |
 |---|---|---|---|
-| Operational excellence | Medium | Infrastructure as Code, CI, runbooks, ephemeral deployment evidence | No approved SLO, ownership model, or alert-routing process |
-| Security | High for production | OIDC federation, temporary credentials, encryption, constrained workflows | Public unauthenticated API with permissive CORS |
-| Reliability | Medium | EventBridge, SQS, DLQ, retries, idempotency, alarms | No approved RTO/RPO, restore test, or regional recovery strategy |
-| Performance efficiency | Medium | Serverless architecture, ARM64 Lambda, batching, bounded concurrency | DynamoDB scans and synchronous metrics aggregation do not scale |
-| Cost optimization | Low for laboratory / Medium for production | Ephemeral lifecycle, cost guardrails, on-demand services | No AWS Budget, anomaly detection, or measured unit economics |
-| Sustainability | Low for laboratory / Medium for production | Ephemeral resources, managed services, ARM64 compute | No workload utilization baseline or sustainability KPI |
+| Operational excellence | Medium | IaC, CI, runbooks, smoke evidence and cleanup | No approved SLO, ownership or alert-routing process |
+| Security | Medium for production reference | Cognito JWT scopes, OIDC federation, explicit CORS and least privilege | No abuse protection, data classification or supply-chain security baseline |
+| Reliability | Medium | EventBridge, SQS, DLQ, retries, idempotency and alarms | No approved RTO/RPO, restore test or regional recovery strategy |
+| Performance efficiency | Medium | Query-oriented indexes, incremental metrics, ARM64 and batching | No pagination contract, load test or empirical tuning |
+| Cost optimization | Low for laboratory / Medium for production | Ephemeral lifecycle and cost guardrails | No AWS Budget, anomaly detection or measured unit economics |
+| Sustainability | Low for laboratory / Medium for production | Ephemeral resources, managed services and query access patterns | No utilization baseline or sustainability KPI |
 
 ### Overall conclusion
 
-The project is strong as a demonstrable serverless laboratory. It shows disciplined automation, asynchronous processing, idempotency, observability, short-lived credentials, and cleanup controls. It is deliberately **not production-ready**. The highest-priority production blockers are authentication and authorization, scalable DynamoDB access patterns, explicit recovery objectives, tested backup/restore procedures, and operational ownership.
+WA-001 through WA-005 are closed in the reference implementation: the cloud API is authenticated and scope-authorized, CORS is explicit, operational listings use DynamoDB Query and metrics are materialized transactionally. The workload remains **not production-ready** because recovery objectives, tested restore, SLOs, ownership, alarm routing, financial controls, abuse protection and workload evidence are still missing.
 
 ---
 
@@ -57,42 +51,27 @@ The project is strong as a demonstrable serverless laboratory. It shows discipli
 ## Evidence
 
 - AWS CDK defines the cloud architecture.
-- GitHub Actions performs linting, application tests, infrastructure tests, CDK synthesis, cost checks, and OIDC workflow checks.
-- Manual deployment requires explicit confirmation and uses an isolated GitHub environment.
-- Deployment evidence is retained temporarily as a workflow artifact.
-- Automatic destruction and an independent emergency cleanup workflow exist.
-- CloudWatch dashboards, alarms, and a DLQ runbook are documented.
-- Architectural decisions are recorded as ADRs.
-
-## Strengths
-
-1. Changes are versioned and evaluated before merge.
-2. Infrastructure changes are reproducible through CDK.
-3. The deployment workflow validates identity, runs smoke tests, and verifies stack removal.
-4. Failure handling is documented for the DLQ.
-5. The repository separates normal CI from explicit cloud deployment.
+- GitHub Actions runs linting, tests, CDK synthesis and all guardrails.
+- Deployment uses GitHub OIDC, explicit confirmation, smoke tests and automatic destroy.
+- CloudWatch dashboards, alarms, runbooks, ADRs and temporary evidence are versioned.
 
 ## Risks and gaps
 
 | ID | Risk | Severity | Status |
 |---|---|---|---|
-| OPS-01 | No approved service owner, escalation path, or on-call responsibility | High | Open |
-| OPS-02 | No SLO, error budget, availability target, or latency objective | High | Open |
-| OPS-03 | CloudWatch alarms have no notification or incident-management destination | Medium | Accepted for laboratory |
+| OPS-01 | No approved service owner, escalation path or on-call responsibility | High | Open |
+| OPS-02 | No SLO, error budget, availability target or latency objective | High | Open |
+| OPS-03 | Alarms have no notification or incident-management destination | Medium | Accepted for laboratory |
 | OPS-04 | No game-day or failure-injection evidence | Medium | Open |
-| OPS-05 | No automated release notes, change calendar, or rollback decision procedure | Medium | Open |
+| OPS-05 | No formal release and rollback decision procedure | Medium | Open |
 
 ## Recommended actions
 
-- Define workload owner, technical owner, security owner, and cost owner.
-- Approve measurable SLOs before production deployment.
-- Route alarms to an approved incident channel using SNS, Chatbot, PagerDuty, or equivalent.
-- Add a game-day scenario for Lambda failure, queue backlog, and DLQ redrive.
-- Add a release and rollback runbook linked from the deployment workflow.
+Define workload ownership and measurable SLOs, route alarms to an approved channel, execute game days and document release/rollback criteria.
 
 ## Pillar rating
 
-**Medium risk.** The engineering workflow is mature for a portfolio project, but operational ownership and measurable outcomes are missing.
+**Medium risk.** Engineering automation is strong, but operational accountability and measurable outcomes remain undefined.
 
 ---
 
@@ -100,47 +79,32 @@ The project is strong as a demonstrable serverless laboratory. It shows discipli
 
 ## Evidence
 
-- GitHub Actions uses OIDC and STS temporary credentials.
-- No long-lived AWS access keys are required in GitHub.
-- The IAM trust policy is restricted to the repository and GitHub environment.
-- DynamoDB and SQS use AWS-managed encryption.
-- Lambda permissions are granted to required project resources.
-- OIDC workflow guardrails reject unsafe triggers and permanent credential patterns.
-- The deployment verifies the expected AWS account.
-
-## Strengths
-
-1. Workload deployment uses federation rather than stored cloud credentials.
-2. The trust relationship is narrower than a repository-wide wildcard.
-3. Encryption at rest is enabled for the principal data and queue services.
-4. Session duration and execution context are bounded.
-5. The public dashboard contains only demonstration data.
+- GitHub Actions uses OIDC and temporary STS credentials.
+- API Gateway uses a Cognito JWT authorizer.
+- Custom scopes separate read, write and manage operations.
+- Only `GET /health` is public in AWS.
+- CORS uses an explicit allowlist.
+- DynamoDB and SQS use managed encryption, and Lambda policies exclude `dynamodb:Scan`.
 
 ## Risks and gaps
 
 | ID | Risk | Severity | Status |
 |---|---|---|---|
-| SEC-01 | API Gateway endpoint has no authentication or authorization | Critical | Accepted for laboratory only |
-| SEC-02 | CORS allows every origin | High | Accepted for laboratory only |
-| SEC-03 | No AWS WAF, throttling policy, request quota, or abuse protection is defined | High | Open |
-| SEC-04 | No formal data classification, retention policy, or privacy assessment | High | Open |
-| SEC-05 | No dependency vulnerability scanning, secret scanning policy, or SBOM generation | Medium | Open |
-| SEC-06 | IAM permissions rely partly on CDK bootstrap roles whose effective permissions require separate review | Medium | Open |
-| SEC-07 | No CloudTrail, GuardDuty, Security Hub, or centralized security account design | Medium | Deferred to multi-account architecture |
+| SEC-01 | API Gateway endpoint has no authentication or authorization | Critical | Closed in reference implementation |
+| SEC-02 | CORS allows every origin | High | Closed in reference implementation |
+| SEC-03 | No WAF decision, throttling policy, request quota or abuse protection | High | Open |
+| SEC-04 | No formal data classification, retention policy or privacy assessment | High | Open |
+| SEC-05 | No dependency vulnerability scanning, secret scanning policy or SBOM | Medium | Open |
+| SEC-06 | Effective CDK bootstrap-role permissions require separate review | Medium | Open |
+| SEC-07 | Central CloudTrail, GuardDuty and Security Hub remain target-state controls | Medium | Deferred to landing zone implementation |
 
 ## Recommended actions
 
-- Require authentication using Amazon Cognito, IAM authorization, or an enterprise identity provider.
-- Implement authorization scopes for incident creation, reading, status changes, and administration.
-- Replace wildcard CORS with an explicit allowlist.
-- Add API Gateway throttling and request quotas; evaluate AWS WAF for public exposure.
-- Document data classification, retention, deletion, and audit requirements.
-- Add Dependabot or equivalent dependency review, code scanning, secret scanning, and SBOM generation.
-- Review the deployed CloudFormation and bootstrap-role policies before any production deployment.
+Validate federation and client separation in the target environment, add throttling and abuse controls, define data governance, and establish dependency, code, secret and SBOM controls.
 
 ## Pillar rating
 
-**High risk for production.** OIDC and temporary credentials are strong controls, but an unauthenticated public API is an explicit production blocker.
+**Medium risk for the production reference.** Authentication, authorization and CORS blockers are closed in code, but production identity operations, abuse protection and governance evidence are not yet complete.
 
 ---
 
@@ -149,45 +113,31 @@ The project is strong as a demonstrable serverless laboratory. It shows discipli
 ## Evidence
 
 - EventBridge decouples ingestion from processing.
-- SQS provides durable buffering and retries.
-- A DLQ retains messages that exceed the retry limit.
-- Lambda reports partial batch failures.
-- Deterministic event identifiers and conditional writes provide idempotency.
-- Queue-age, Lambda-error, and DLQ alarms are defined.
-- An emergency cleanup workflow handles incomplete ephemeral deployments.
-
-## Strengths
-
-1. The ingestion path does not depend on immediate downstream availability.
-2. Failed SQS records can be retried independently.
-3. Duplicate delivery is expected and handled.
-4. Backlog age and DLQ depth are observable.
-5. Managed regional services reduce infrastructure maintenance.
+- SQS provides durable buffering, retries and partial batch failure handling.
+- A DLQ retains poison messages.
+- Conditional writes and deterministic identifiers provide idempotency.
+- Transactional counters keep incident and metric changes consistent.
+- Queue-age, Lambda-error and DLQ alarms are defined.
 
 ## Risks and gaps
 
 | ID | Risk | Severity | Status |
 |---|---|---|---|
 | REL-01 | RTO and RPO are undefined | High | Open |
-| REL-02 | DynamoDB point-in-time recovery and backup policy are not enabled | High | Accepted for ephemeral laboratory only |
+| REL-02 | DynamoDB PITR and backup policy are not enabled | High | Accepted for ephemeral laboratory only |
 | REL-03 | Restore procedures have not been tested | High | Open |
-| REL-04 | Architecture is single-region with no documented regional recovery strategy | Medium | Open |
-| REL-05 | API Gateway availability and client retry behavior are not documented | Medium | Open |
-| REL-06 | EventBridge target delivery failure handling beyond the SQS target is not explicitly tested | Medium | Open |
+| REL-04 | Architecture is single-region with no approved recovery strategy | Medium | Open |
+| REL-05 | Client timeout, retry and backoff behavior are not documented | Medium | Open |
+| REL-06 | Poison-message and redrive integration evidence is incomplete | Medium | Open |
 | REL-07 | Alarm notifications are not routed to responders | Medium | Accepted for laboratory |
 
 ## Recommended actions
 
-- Define RTO and RPO from business requirements.
-- Enable DynamoDB point-in-time recovery for persistent environments.
-- Create and test restore and regional recovery runbooks.
-- Define client timeout, retry, backoff, and idempotency behavior.
-- Add integration tests for poison messages, EventBridge delivery failure, queue saturation, and redrive.
-- Decide whether single-region recovery is sufficient or a multi-region pattern is required.
+Define RTO/RPO, enable PITR for persistent environments, test restore and regional recovery, and execute failure scenarios with real notification paths.
 
 ## Pillar rating
 
-**Medium risk.** The event-driven design has strong failure isolation, but data recovery and business recovery objectives are not defined.
+**Medium risk.** Failure isolation is strong, but business recovery objectives and restore evidence are absent.
 
 ---
 
@@ -195,44 +145,31 @@ The project is strong as a demonstrable serverless laboratory. It shows discipli
 
 ## Evidence
 
-- Lambda uses ARM64 and 256 MB memory.
-- Reserved concurrency bounds workload consumption.
+- Lambda uses ARM64, bounded memory and reserved concurrency.
 - SQS processing uses batches and a batching window.
-- DynamoDB uses on-demand billing.
-- API and processor duration p95 are displayed in CloudWatch.
-- The architecture uses managed serverless services.
-
-## Strengths
-
-1. Compute scales independently across ingestion and processing.
-2. Queue buffering absorbs short traffic bursts.
-3. Batch processing reduces invocation overhead.
-4. ARM64 can improve price-performance for compatible workloads.
-5. Duration and throttling metrics are available for tuning.
+- The incidents table has GSIs for time, site, status and severity.
+- `GET /events` uses DynamoDB Query rather than Scan.
+- Metrics are maintained as transactional incremental aggregates.
+- Lambda duration and throttling metrics are available.
 
 ## Risks and gaps
 
 | ID | Risk | Severity | Status |
 |---|---|---|---|
-| PERF-01 | `GET /events` uses DynamoDB Scan and in-memory filtering | High at scale | Accepted for laboratory only |
-| PERF-02 | Metrics are calculated by scanning and aggregating incident records synchronously | High at scale | Accepted for laboratory only |
-| PERF-03 | No load test, throughput objective, or representative traffic model exists | High | Open |
-| PERF-04 | Reserved concurrency of two may throttle legitimate bursts | Medium | Intentional cost guardrail |
-| PERF-05 | Lambda memory, timeout, batch size, and batching window have not been tuned with measurements | Medium | Open |
-| PERF-06 | No pagination contract or continuation token is exposed by the API | Medium | Open |
+| PERF-01 | `GET /events` uses DynamoDB Scan and in-memory filtering | High at scale | Closed in reference implementation |
+| PERF-02 | Metrics scan and aggregate incident records synchronously | High at scale | Closed in reference implementation |
+| PERF-03 | No load test, throughput objective or representative traffic model | High | Open |
+| PERF-04 | Reserved concurrency of two may throttle legitimate bursts | Medium | Intentional laboratory guardrail |
+| PERF-05 | Memory, timeout and batch settings lack empirical tuning | Medium | Open |
+| PERF-06 | No continuation-token pagination contract is exposed | Medium | Open |
 
 ## Recommended actions
 
-- Design DynamoDB access patterns before production implementation.
-- Add GSIs for site, severity, status, and time-based queries only where justified by access patterns.
-- Replace full-table metric scans with incremental counters, DynamoDB Streams aggregation, or scheduled materialization.
-- Implement API pagination with opaque continuation tokens.
-- Add load tests and measure latency, throttling, concurrency, queue age, and cost per incident.
-- Tune Lambda memory and SQS batch settings from empirical results.
+Add opaque continuation tokens, run representative load tests, inspect hot partitions and tune Lambda concurrency, memory and SQS batch settings from measurements.
 
 ## Pillar rating
 
-**Medium risk.** The service selection is efficient, but the current data-access design is intentionally limited to small laboratory datasets.
+**Medium risk.** The primary Scan bottlenecks are removed, but scale behavior has not been measured and pagination remains incomplete.
 
 ---
 
@@ -240,45 +177,29 @@ The project is strong as a demonstrable serverless laboratory. It shows discipli
 
 ## Evidence
 
-- The default operating mode is local and does not require AWS resources.
-- AWS deployment is manual, temporary, and followed by automatic destruction.
-- A separate emergency destroy workflow exists.
-- Static guardrails reject NAT Gateway, EC2, RDS, ALB, EKS, OpenSearch, and ElastiCache resources.
-- DynamoDB uses on-demand capacity.
-- Lambda concurrency, memory, and timeouts are bounded.
-- CloudWatch uses native service metrics rather than custom metrics.
-- Log retention is one day for ephemeral demonstrations.
-
-## Strengths
-
-1. The project avoids idle infrastructure in its default state.
-2. Expensive resource categories are automatically rejected.
-3. Serverless consumption follows workload activity.
-4. Cleanup is part of the deployment lifecycle rather than a manual afterthought.
-5. The README explicitly avoids promising mathematically guaranteed zero AWS charges.
+- Local mode and GitHub Pages do not require AWS runtime resources.
+- AWS deployment is manual, temporary and automatically destroyed.
+- Static guardrails reject high-risk fixed-cost resources.
+- DynamoDB uses on-demand capacity and Lambda compute is bounded.
 
 ## Risks and gaps
 
 | ID | Risk | Severity | Status |
 |---|---|---|---|
-| COST-01 | No AWS Budget, cost anomaly monitor, or billing alarm is defined | High before real deployment | Open |
-| COST-02 | No cost allocation tags beyond basic project/environment tags | Medium | Open |
-| COST-03 | No cost-per-incident model or traffic-based estimate | Medium | Open |
+| COST-01 | No AWS Budget, anomaly monitor or billing alarm is defined | High before real deployment | Open |
+| COST-02 | Cost allocation tags are incomplete | Medium | Open |
+| COST-03 | No cost-per-incident model exists | Medium | Open |
 | COST-04 | CDK bootstrap resources may remain after stack destruction | Medium | Documented |
-| COST-05 | CloudWatch dashboard and alarms can incur charges in a real account | Medium | Documented |
-| COST-06 | Emergency cleanup still depends on the federated role and GitHub availability | Medium | Accepted risk |
+| COST-05 | CloudWatch and Cognito usage may incur charges in a real account | Medium | Documented |
+| COST-06 | Emergency cleanup depends on the federated role and GitHub availability | Medium | Accepted risk |
 
 ## Recommended actions
 
-- Configure an AWS Budget and cost anomaly detection before the first real deployment.
-- Define mandatory tags for owner, environment, application, cost center, and expiration.
-- Estimate cost per 1,000 incidents for low, expected, and peak traffic.
-- Document and periodically inspect CDK bootstrap resources.
-- Add a scheduled orphan-resource inventory outside this repository if deployments become routine.
+Configure account-level budgets and anomaly detection before deployment, complete tagging, estimate cost per 1,000 incidents and inventory orphaned resources.
 
 ## Pillar rating
 
-**Low risk for the laboratory and medium risk for production.** Lifecycle controls are strong, but account-level financial controls are not implemented.
+**Low risk for the laboratory and medium risk for production.** Lifecycle controls are strong, but financial governance is not implemented.
 
 ---
 
@@ -288,40 +209,27 @@ The project is strong as a demonstrable serverless laboratory. It shows discipli
 
 - The workload is not kept running in AWS by default.
 - Managed serverless services scale with demand.
-- Lambda uses ARM64.
-- SQS batching reduces per-message invocation overhead.
-- Log retention is deliberately short in ephemeral environments.
-- Local development reuses an existing Ubuntu server.
-
-## Strengths
-
-1. Idle cloud capacity is avoided by design.
-2. Managed services reduce overprovisioning.
-3. ARM64 compute is selected for the Lambda functions.
-4. Batching reduces invocation frequency.
-5. Data and log retention are constrained for the demonstration environment.
+- Lambda uses ARM64 and SQS batching.
+- Query-based access and incremental metrics avoid repeated table scans.
+- Log retention is short in the ephemeral environment.
 
 ## Risks and gaps
 
 | ID | Risk | Severity | Status |
 |---|---|---|---|
-| SUS-01 | No utilization, energy, or sustainability KPI is measured | Medium | Open |
-| SUS-02 | No data-retention policy linked to business value exists | Medium | Open |
+| SUS-01 | No utilization, energy or sustainability KPI is measured | Medium | Open |
+| SUS-02 | No retention policy linked to business value exists | Medium | Open |
 | SUS-03 | No regional sustainability criterion has been evaluated | Low | Open |
-| SUS-04 | Inefficient DynamoDB scans would waste read capacity at scale | Medium | Accepted for laboratory only |
-| SUS-05 | Repeated full deployments may consume unnecessary build and cloud resources | Low | Mitigated by manual execution |
+| SUS-04 | Inefficient DynamoDB scans would waste read capacity at scale | Medium | Closed in reference implementation |
+| SUS-05 | Repeated full deployments consume build and cloud resources | Low | Mitigated by manual execution |
 
 ## Recommended actions
 
-- Track incidents processed per Lambda invocation and per GB-second.
-- Remove scan-based access patterns before scale.
-- Define data and log retention according to business and compliance value.
-- Evaluate deployment region using latency, regulatory, resilience, and sustainability requirements together.
-- Prefer targeted deployments and cached build dependencies where safe.
+Measure useful work per Lambda invocation and GB-second, define retention by business value and evaluate region using latency, regulation, resilience and sustainability together.
 
 ## Pillar rating
 
-**Low risk for the laboratory and medium risk for production.** The ephemeral serverless model is favorable, but no quantitative sustainability target exists.
+**Low risk for the laboratory and medium risk for production.** The design avoids idle capacity and table scans, but no quantitative sustainability target exists.
 
 ---
 
@@ -329,49 +237,39 @@ The project is strong as a demonstrable serverless laboratory. It shows discipli
 
 ## Production blockers
 
-1. **SEC-01:** Add authentication and authorization.
-2. **SEC-02:** Restrict CORS.
-3. **PERF-01 / PERF-02:** Replace DynamoDB scans with production access patterns.
-4. **REL-01 / REL-02 / REL-03:** Define RTO/RPO, enable recovery controls, and test restore.
-5. **OPS-01 / OPS-02:** Assign ownership and approve SLOs.
-6. **COST-01:** Configure account-level cost controls before deployment.
+1. **SEC-01 / SEC-02:** Closed in reference; validate Cognito federation, scopes and CORS in the target environment.
+2. **PERF-01 / PERF-02:** Closed in reference; validate indexes and aggregates under representative load.
+3. **REL-01 / REL-02 / REL-03:** Define RTO/RPO, enable recovery controls and test restore.
+4. **OPS-01 / OPS-02:** Assign ownership and approve SLOs.
+5. **COST-01:** Configure account-level financial controls.
+6. **SEC-03 / SEC-04 / SEC-05:** Add abuse protection, data governance and supply-chain security.
 
 ## Accepted laboratory risks
 
-The following choices are acceptable only because the project is a short-lived portfolio laboratory:
+The following choices are acceptable only because this is a short-lived portfolio laboratory:
 
-- Public unauthenticated API during a controlled ephemeral test.
-- Wildcard CORS.
-- DynamoDB table removal on stack destruction.
+- Local Docker mode remains unauthenticated inside the trusted operator network.
+- DynamoDB tables are deleted with the ephemeral stack.
 - No point-in-time recovery.
 - One-day log retention.
 - No alarm notification actions.
 - Small reserved concurrency.
-- Scan-based list and metric operations.
+- No API continuation-token pagination.
 
 ## Review cadence
 
-Repeat this review when any of the following occurs:
-
-- The workload is proposed for real users or business data.
-- Authentication or multi-account architecture is introduced.
-- A persistent AWS environment is created.
-- Traffic assumptions change materially.
-- Recovery objectives are approved.
-- A major AWS service or architecture component changes.
-- Six months have elapsed since the previous review.
+Repeat this review before real users or data, after identity or recovery changes, when a persistent environment is created, after material traffic changes, after an incident or game day, and at least every six months.
 
 ## Evidence index
 
+- `backend/app/repository.py`
 - `infrastructure/cloudops_infra/stack.py`
 - `.github/workflows/validate.yml`
 - `.github/workflows/deploy-ephemeral.yml`
-- `.github/workflows/destroy-ephemeral.yml`
-- `scripts/check_zero_cost.py`
-- `scripts/check_oidc_workflows.py`
+- `scripts/check_p0_controls.py`
+- `docs/p0-production-controls.md`
 - `docs/observability.md`
 - `docs/runbook-dlq.md`
-- `docs/github-oidc-deployment.md`
 - `docs/adr/`
 
 ## Reference
