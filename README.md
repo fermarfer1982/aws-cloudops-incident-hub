@@ -3,7 +3,7 @@
 [![Validate](https://github.com/fermarfer1982/aws-cloudops-incident-hub/actions/workflows/validate.yml/badge.svg)](https://github.com/fermarfer1982/aws-cloudops-incident-hub/actions/workflows/validate.yml)
 [![Publish demo](https://github.com/fermarfer1982/aws-cloudops-incident-hub/actions/workflows/pages.yml/badge.svg)](https://github.com/fermarfer1982/aws-cloudops-incident-hub/actions/workflows/pages.yml)
 
-Plataforma serverless para recibir, clasificar y gestionar incidencias de infraestructura. El proyecto está orientado a demostrar competencias de **AWS Solutions Architecture**, Infrastructure as Code, seguridad, observabilidad y optimización de costes.
+Plataforma serverless para recibir, clasificar y gestionar incidencias de infraestructura. El proyecto está orientado a demostrar competencias de **AWS Solutions Architecture**, Infrastructure as Code, seguridad, resiliencia, observabilidad y optimización de costes.
 
 > El laboratorio funciona íntegramente en local. La demo pública se publica en GitHub Pages. No es necesario mantener recursos activos en AWS.
 
@@ -19,6 +19,8 @@ Plataforma serverless para recibir, clasificar y gestionar incidencias de infrae
 - Procesamiento asíncrono con EventBridge, SQS, Lambda y Dead Letter Queue.
 - Idempotencia mediante identificadores deterministas y escrituras condicionales.
 - Respuestas parciales de lotes SQS para reintentar solo los mensajes fallidos.
+- Dashboard de CloudWatch y alarmas operativas basadas en métricas nativas.
+- Runbook para investigación y redrive controlado de mensajes en la DLQ.
 
 ## Arquitectura MVP
 
@@ -30,6 +32,10 @@ flowchart LR
     Q --> P[Lambda processor]
     Q -. tras 3 fallos .-> DLQ[SQS Dead Letter Queue]
     P --> DB[(DynamoDB)]
+    API --> CW[CloudWatch]
+    P --> CW
+    Q --> CW
+    DLQ --> CW
     LOCAL[Docker local] --> DIRECT[Procesamiento síncrono]
     DIRECT --> DDBL[(DynamoDB Local)]
     GH[GitHub Actions] --> CI[Lint + Tests + CDK Synth]
@@ -115,7 +121,7 @@ pip install -r backend/requirements-dev.txt
 pip install -r infrastructure/requirements.txt
 export PYTHONPATH="$PWD/backend"
 pytest -q tests
-cd infrastructure && pytest -q tests && cdk synth
+cd infrastructure && PYTHONPATH=. python -m pytest -q tests && cdk synth
 ```
 
 El comando siguiente inspecciona la plantilla sintetizada y falla si encuentra NAT Gateway, EC2, RDS, ALB, EKS, OpenSearch o ElastiCache:
@@ -147,6 +153,21 @@ curl -X POST http://localhost:8080/events \
   }'
 ```
 
+## Observabilidad
+
+La plantilla CDK crea un dashboard denominado `cloudops-incident-hub-operations` con métricas nativas de Lambda y SQS. También define cuatro alarmas:
+
+- Errores de la Lambda de ingesta.
+- Errores de la Lambda procesadora.
+- Antigüedad excesiva del mensaje más antiguo.
+- Presencia de mensajes en la Dead Letter Queue.
+
+No se configuran acciones SNS automáticas y no se emiten métricas personalizadas. Consulta:
+
+- [Diseño de observabilidad](docs/observability.md).
+- [Runbook de la Dead Letter Queue](docs/runbook-dlq.md).
+- [ADR-003: métricas nativas de CloudWatch](docs/adr/003-native-cloudwatch-observability.md).
+
 ## GitHub Pages
 
 El workflow `.github/workflows/pages.yml` publica automáticamente el directorio `frontend`.
@@ -159,9 +180,9 @@ Después de subir el repositorio:
 
 ## Coste
 
-La ejecución local y GitHub Pages no consumen servicios de AWS. La plantilla cloud está diseñada para despliegues efímeros y evita servicios con coste fijo o fácil de olvidar.
+La ejecución local y GitHub Pages no consumen servicios de AWS. La plantilla cloud está diseñada para despliegues efímeros y evita servicios con coste fijo o fácil de olvidar. No se mantiene un stack desplegado; cualquier despliegue real debe revisarse y destruirse al terminar la demostración.
 
-Consulta [docs/cost-control.md](docs/cost-control.md) y [docs/event-driven-processing.md](docs/event-driven-processing.md).
+Consulta [docs/cost-control.md](docs/cost-control.md), [docs/event-driven-processing.md](docs/event-driven-processing.md) y [docs/observability.md](docs/observability.md).
 
 ## Roadmap
 
@@ -172,7 +193,7 @@ Consulta [docs/cost-control.md](docs/cost-control.md) y [docs/event-driven-proce
 - [x] CI y guardrails de coste.
 - [x] EventBridge, SQS y Dead Letter Queue.
 - [x] Idempotencia, reintentos y respuestas parciales de lote.
-- [ ] CloudWatch dashboard y alarmas.
+- [x] CloudWatch dashboard, alarmas y runbook operacional.
 - [ ] GitHub OIDC para despliegue temporal.
 - [ ] Well-Architected review.
 - [ ] Arquitectura multi-account de producción.
