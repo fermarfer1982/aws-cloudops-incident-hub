@@ -1,0 +1,208 @@
+name: Deploy ephemeral AWS lab
+run-name: Ephemeral AWS lab by ${{ github.actor }} (#${{ github.run_number }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type DEPLOY-AND-DESTROY to continue
+        required: true
+        type: string
+      run_smoke_test:
+        description: Run API and asynchronous processing smoke tests
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: aws-ephemeral-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  deploy-test-destroy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: aws-ephemeral
+    timeout-minutes: 30
+    env:
+      STACK_NAME: CloudOpsIncidentHubStack
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      CDK_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+      CDK_DEFAULT_ACCOUNT: ${{ vars.AWS_ACCOUNT_ID }}
+
+    steps:
+      - name: Validate explicit confirmation
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          test "$CONFIRMATION" = "DEPLOY-AND-DESTROY" || {
+            echo "Confirmation must be exactly DEPLOY-AND-DESTROY"
+            exit 1
+          }
+
+      - name: Validate required repository variables
+        env:
+          AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          test -n "$AWS_REGION"
+          test -n "$AWS_ACCOUNT_ID"
+          test -n "$AWS_DEPLOY_ROLE_ARN"
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install deployment dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements-dev.txt
+          pip install -r infrastructure/requirements.txt
+          npm install --global aws-cdk@2
+
+      - name: Configure temporary AWS credentials through OIDC
+        id: aws_credentials
+        uses: aws-actions/configure-aws-credentials@v6.1.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: GitHubActions-${{ github.run_id }}
+          role-duration-seconds: 1800
+          mask-aws-account-id: true
+          unset-current-credentials: true
+
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Validate and synthesize infrastructure
+        working-directory: infrastructure
+        run: |
+          python -m pytest -q tests
+          cdk synth "$STACK_NAME" --quiet \
+            -c account="$AWS_ACCOUNT_ID" \
+            -c region="$AWS_REGION"
+          python ../scripts/check_zero_cost.py \
+            "cdk.out/${STACK_NAME}.template.json"
+
+      - name: Deploy ephemeral stack
+        working-directory: infrastructure
+        run: |
+          mkdir -p ../evidence
+          cdk deploy "$STACK_NAME" \
+            --require-approval never \
+            --outputs-file ../evidence/cdk-outputs.json \
+            -c account="$AWS_ACCOUNT_ID" \
+            -c region="$AWS_REGION"
+
+      - name: Run smoke tests
+        if: inputs.run_smoke_test
+        env:
+          EVENT_TYPE: GITHUB_OIDC_SMOKE_TEST
+        run: |
+          API_URL=$(python - <<'PY'
+          import json
+          with open("evidence/cdk-outputs.json", encoding="utf-8") as handle:
+              outputs = json.load(handle)
+          print(outputs["CloudOpsIncidentHubStack"]["ApiUrl"].rstrip("/"))
+          PY
+          )
+          echo "API_URL=$API_URL" >> "$GITHUB_ENV"
+
+          curl --fail --silent --show-error \
+            --retry 12 --retry-delay 5 --retry-all-errors \
+            "$API_URL/health" | tee evidence/health.json
+
+          cat > evidence/smoke-event.json <<JSON
+          {
+            "source": "github-actions-${GITHUB_RUN_ID}",
+            "site": "ephemeral-lab",
+            "type": "${EVENT_TYPE}",
+            "message": "OIDC deployment smoke test from GitHub Actions",
+            "metadata": {
+              "github_run_id": "${GITHUB_RUN_ID}",
+              "github_sha": "${GITHUB_SHA}"
+            }
+          }
+          JSON
+
+          curl --fail --silent --show-error \
+            -X POST "$API_URL/events" \
+            -H "Content-Type: application/json" \
+            --data @evidence/smoke-event.json \
+            | tee evidence/accepted-event.json
+
+          processed=false
+          for attempt in $(seq 1 18); do
+            curl --fail --silent --show-error \
+              "$API_URL/events?limit=100" > evidence/incidents.json
+            if python - <<'PY'
+          import json
+          with open("evidence/incidents.json", encoding="utf-8") as handle:
+              incidents = json.load(handle)
+          raise SystemExit(0 if any(item.get("type") == "GITHUB_OIDC_SMOKE_TEST" for item in incidents) else 1)
+          PY
+            then
+              processed=true
+              break
+            fi
+            sleep 5
+          done
+
+          test "$processed" = true || {
+            echo "The asynchronous incident was not observable before the timeout"
+            exit 1
+          }
+
+      - name: Record deployment metadata
+        if: always() && steps.aws_credentials.outcome == 'success'
+        run: |
+          mkdir -p evidence
+          {
+            echo "repository=${GITHUB_REPOSITORY}"
+            echo "workflow=${GITHUB_WORKFLOW}"
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "commit=${GITHUB_SHA}"
+            echo "region=${AWS_REGION}"
+            echo "stack=${STACK_NAME}"
+            date -u +"captured_at=%Y-%m-%dT%H:%M:%SZ"
+          } > evidence/deployment-metadata.txt
+
+      - name: Upload temporary deployment evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aws-ephemeral-evidence-${{ github.run_id }}
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Destroy ephemeral stack
+        if: always() && steps.aws_credentials.outcome == 'success'
+        working-directory: infrastructure
+        run: |
+          cdk destroy "$STACK_NAME" --force \
+            -c account="$AWS_ACCOUNT_ID" \
+            -c region="$AWS_REGION"
+
+      - name: Verify stack removal
+        if: always() && steps.aws_credentials.outcome == 'success'
+        run: |
+          if aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo "Stack still exists after the cleanup step"
+            exit 1
+          fi
+          echo "Stack removal verified"
