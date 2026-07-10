@@ -43,7 +43,9 @@ jobs:
 
       - name: Test infrastructure
         working-directory: infrastructure
-        run: pytest -q tests
+        env:
+          PYTHONPATH: .
+        run: python -m pytest -q tests
 
       - name: Synthesize CloudFormation
         working-directory: infrastructure
