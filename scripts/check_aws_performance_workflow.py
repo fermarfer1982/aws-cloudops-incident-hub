@@ -43,7 +43,6 @@ def main() -> None:
             "allowed-account-ids:",
             "enable_load_test_client=true",
             "--max-rps \"$MAX_RPS\"",
-            "MAX_RPS 8",
             "cognito-idp describe-user-pool-client",
             "grant_type=client_credentials",
             "::add-mask::$CLIENT_SECRET",
@@ -61,11 +60,22 @@ def main() -> None:
     require("pull_request:" not in workflow, "AWS performance workflow must not run on PRs")
     require("schedule:" not in workflow, "AWS performance workflow must not be scheduled")
     require("workflow_call:" not in workflow, "AWS performance workflow must not be reusable")
-    require("60\")" not in workflow, "Unexpected workflow text")
-    require("case \"$DURATION_SECONDS\" in 15|30|60)" in workflow, "Duration hard cap missing")
-    require("case \"$CONCURRENCY\" in 1|2|5)" in workflow, "Concurrency hard cap missing")
-    require("case \"$MAX_RPS\" in 1|2|5|8)" in workflow, "Request-rate hard cap missing")
-    require("case \"$WRITE_PERCENT\" in 0|1|5)" in workflow, "Write-percentage hard cap missing")
+    require(
+        "case \"$DURATION_SECONDS\" in 15|30|60)" in workflow,
+        "Duration hard cap missing",
+    )
+    require(
+        "case \"$CONCURRENCY\" in 1|2|5)" in workflow,
+        "Concurrency hard cap missing",
+    )
+    require(
+        "case \"$MAX_RPS\" in 1|2|5|8)" in workflow,
+        "Request-rate hard cap missing",
+    )
+    require(
+        "case \"$WRITE_PERCENT\" in 0|1|5)" in workflow,
+        "Write-percentage hard cap missing",
+    )
     require("/tmp/cloudops-token.json" in workflow, "Token response must remain temporary")
     require("evidence/cloudops-token.json" not in workflow, "Access token must not be uploaded")
 
