@@ -10,4 +10,5 @@ cdk.out/
 *.sqlite3
 coverage.xml
 htmlcov/
+artifacts/
 .DS_Store
