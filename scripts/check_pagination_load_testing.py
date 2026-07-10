@@ -13,6 +13,7 @@ API_TEST = ROOT / "tests" / "test_pagination.py"
 LOAD_TEST = ROOT / "scripts" / "run_load_test.py"
 GUIDE = ROOT / "docs" / "pagination-load-testing.md"
 BASELINE = ROOT / "docs" / "performance-baseline.md"
+LOCAL_EVIDENCE = ROOT / "docs" / "performance-baseline-local-2026-07-10.md"
 ADR = ROOT / "docs" / "adr" / "010-cursor-pagination-and-load-testing.md"
 WORKFLOW = ROOT / ".github" / "workflows" / "validate.yml"
 
@@ -39,6 +40,7 @@ def main() -> None:
         LOAD_TEST,
         GUIDE,
         BASELINE,
+        LOCAL_EVIDENCE,
         ADR,
         WORKFLOW,
     )
@@ -116,7 +118,8 @@ def main() -> None:
             "LastEvaluatedKey",
             "ExclusiveStartKey",
             "read-only",
-            "representative baseline has not yet been executed",
+            "A validated local baseline was executed on 2026-07-10",
+            "WA-017 has local laboratory evidence",
         ),
     )
     require_tokens(
@@ -125,6 +128,20 @@ def main() -> None:
             "Not measured yet",
             "must not be populated with estimated or invented results",
             "JSON report",
+        ),
+    )
+    require_tokens(
+        LOCAL_EVIDENCE,
+        (
+            "Measured and validated for the local Docker laboratory",
+            "158.18 req/s",
+            "159.38 req/s",
+            "150.29 req/s",
+            "0.0%",
+            "365",
+            "Duplicate IDs | 0",
+            "does not measure",
+            "WA-017 is complete only for the local laboratory",
         ),
     )
     require_tokens(
