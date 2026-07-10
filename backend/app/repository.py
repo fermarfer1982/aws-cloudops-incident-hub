@@ -77,7 +77,7 @@ class IncidentRepository:
                 aws_secret_access_key="local",
             )
         self._resource = boto3.resource("dynamodb", **kwargs)
-        self._client = self._resource.meta.client
+        self._client = boto3.client("dynamodb", **kwargs)
         self._table = self._resource.Table(settings.table_name)
         self._metrics_table = self._resource.Table(settings.metrics_table_name)
 
