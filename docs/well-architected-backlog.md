@@ -15,11 +15,11 @@ Este backlog convierte los hallazgos de `docs/well-architected-review.md` en acc
 
 | ID | Prioridad | Pilar | Acción | Resultado verificable | Dependencias | Estado |
 |---|---:|---|---|---|---|---|
-| WA-001 | P0 | Security | Añadir autenticación a API Gateway | Todas las rutas excepto `/health` rechazan peticiones anónimas | Decisión Cognito, IAM o IdP corporativo | Pendiente |
-| WA-002 | P0 | Security | Implementar autorización por operaciones | Roles diferenciados para crear, leer, actualizar y administrar incidencias | WA-001 | Pendiente |
-| WA-003 | P0 | Security | Sustituir CORS `*` por allowlist | CloudFormation contiene únicamente orígenes aprobados | Dominio frontend definitivo | Pendiente |
-| WA-004 | P0 | Performance | Eliminar DynamoDB Scan del listado principal | Consultas usan Query y un patrón de claves documentado | Diseño de access patterns | Pendiente |
-| WA-005 | P0 | Performance | Eliminar agregación síncrona por Scan en `/metrics` | Métricas proceden de agregados incrementales o materializados | Diseño de modelo agregado | Pendiente |
+| WA-001 | P0 | Security | Añadir autenticación a API Gateway | Todas las rutas excepto `/health` rechazan peticiones anónimas | Amazon Cognito y JWT authorizer | Completado en referencia |
+| WA-002 | P0 | Security | Implementar autorización por operaciones | Scopes separados para crear, leer y gestionar incidencias | WA-001 | Completado en referencia |
+| WA-003 | P0 | Security | Sustituir CORS `*` por allowlist | CloudFormation contiene únicamente orígenes aprobados | Dominios configurables mediante contexto CDK | Completado en referencia |
+| WA-004 | P0 | Performance | Eliminar DynamoDB Scan del listado principal | Consultas usan Query y un patrón de claves documentado | Cuatro GSIs de acceso | Completado en referencia |
+| WA-005 | P0 | Performance | Eliminar agregación síncrona por Scan en `/metrics` | Métricas proceden de agregados incrementales o materializados | Tabla de métricas transaccional | Completado en referencia |
 | WA-006 | P1 | Reliability | Definir RTO y RPO | Documento aprobado con valores, responsables y supuestos | Requisitos de negocio | Pendiente |
 | WA-007 | P1 | Reliability | Activar PITR para entornos persistentes | Test CDK verifica `PointInTimeRecoverySpecification` | WA-006 | Pendiente |
 | WA-008 | P1 | Reliability | Crear y probar restauración | Runbook y evidencia de un restore exitoso | WA-007 | Pendiente |
@@ -50,14 +50,15 @@ Este backlog convierte los hallazgos de `docs/well-architected-review.md` en acc
 
 Estos riesgos no deben confundirse con controles de producción completados:
 
-- API anónima durante despliegues temporales controlados.
-- CORS abierto.
+- El modo Docker local permanece sin autenticación cloud dentro de una red de laboratorio confiable.
 - Tabla DynamoDB eliminada al destruir el stack.
 - Sin PITR ni backup persistente.
 - Sin acciones de notificación para alarmas.
 - Logs con retención de un día.
 - Concurrencia reservada muy baja.
-- Operaciones basadas en Scan para volúmenes pequeños.
+- Sin paginación mediante continuation token.
+
+Los controles P0 se consideran completados en la implementación de referencia, pero requieren evidencia de despliegue, integración de identidades y pruebas operativas antes de aceptar usuarios o datos reales.
 
 ## Definition of done para producción
 
@@ -66,8 +67,8 @@ El workload no debe describirse como production-ready hasta que, como mínimo:
 1. WA-001 a WA-015 estén cerrados o exista una aceptación de riesgo formal con owner y fecha de expiración.
 2. Existan SLO, RTO, RPO y ownership aprobados.
 3. Se haya probado restore, rollback y respuesta ante mensajes en DLQ.
-4. La API tenga autenticación, autorización, CORS restringido y límites de abuso.
-5. No existan scans completos en rutas operativas principales.
+4. La API tenga autenticación, autorización, CORS restringido y límites de abuso validados en el entorno objetivo.
+5. No existan scans completos en rutas operativas principales y se haya probado paginación con carga representativa.
 6. Se hayan configurado controles de coste de cuenta.
 7. La revisión Well-Architected se repita con evidencias de un entorno real.
 
