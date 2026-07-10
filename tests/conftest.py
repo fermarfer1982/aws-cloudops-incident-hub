@@ -13,8 +13,15 @@ class MemoryRepository:
     def __init__(self) -> None:
         self.items: dict[str, dict] = {}
 
-    def put(self, incident: dict) -> None:
-        self.items[incident["incident_id"]] = incident
+    def put_if_absent(self, incident: dict) -> bool:
+        incident_id = incident["incident_id"]
+        if incident_id in self.items:
+            return False
+        self.items[incident_id] = incident
+        return True
+
+    def get(self, incident_id: str) -> dict | None:
+        return self.items.get(incident_id)
 
     def update_status(self, incident_id: str, status: str, updated_at: str) -> dict:
         if incident_id not in self.items:
@@ -40,9 +47,33 @@ class MemoryRepository:
 
 
 @pytest.fixture
-def client() -> Iterator[TestClient]:
-    service = IncidentService(MemoryRepository())
+def memory_repository() -> MemoryRepository:
+    return MemoryRepository()
+
+
+@pytest.fixture
+def client(memory_repository: MemoryRepository) -> Iterator[TestClient]:
+    service = IncidentService(memory_repository)
     app.dependency_overrides[get_service] = lambda: service
     with TestClient(app) as test_client:
         yield test_client
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def app_client_factory(memory_repository: MemoryRepository):
+    clients: list[TestClient] = []
+
+    def factory(*, publisher=None):
+        service = IncidentService(memory_repository, publisher=publisher)
+        app.dependency_overrides[get_service] = lambda: service
+        test_client = TestClient(app)
+        test_client.__enter__()
+        clients.append(test_client)
+        return test_client, memory_repository
+
+    yield factory
+
+    for test_client in clients:
+        test_client.__exit__(None, None, None)
     app.dependency_overrides.clear()
