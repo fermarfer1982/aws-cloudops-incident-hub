@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterator
 
 import pytest
@@ -44,6 +45,22 @@ class MemoryRepository:
         if site:
             items = [item for item in items if item["site"] == site]
         return sorted(items, key=lambda item: item["created_at"], reverse=True)[:limit]
+
+    def metrics(self) -> dict:
+        incidents = list(self.items.values())
+        status_counts = Counter(item["status"] for item in incidents)
+        severity_counts = Counter(item["severity"] for item in incidents)
+        site_counts = Counter(item["site"] for item in incidents)
+        return {
+            "total": len(incidents),
+            "open": status_counts["open"],
+            "investigating": status_counts["investigating"],
+            "resolved": status_counts["resolved"],
+            "critical": severity_counts["critical"],
+            "warning": severity_counts["warning"],
+            "info": severity_counts["info"],
+            "by_site": dict(site_counts.most_common()),
+        }
 
 
 @pytest.fixture
