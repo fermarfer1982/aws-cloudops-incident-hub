@@ -1,0 +1,44 @@
+name: Generate SBOM
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "41 5 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sbom-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generate:
+    name: Generate repository SBOM
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare artifact directory
+        run: mkdir -p artifacts
+
+      - name: Generate SPDX JSON SBOM
+        uses: anchore/sbom-action@v0.24.0
+        with:
+          path: .
+          format: spdx-json
+          output-file: artifacts/aws-cloudops-incident-hub.spdx.json
+          upload-artifact: false
+          dependency-snapshot: false
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aws-cloudops-incident-hub-sbom
+          path: artifacts/aws-cloudops-incident-hub.spdx.json
+          if-no-files-found: error
+          retention-days: 30
