@@ -1,0 +1,298 @@
+{
+  "schema_version": "1.0",
+  "status": "reference-blueprint-not-deployed",
+  "workload": "AWS CloudOps Incident Hub",
+  "primary_region": "eu-west-1",
+  "secondary_region": "eu-central-1",
+  "principles": [
+    "One AWS Organization is the primary governance and security boundary",
+    "Production and non-production workloads use separate AWS accounts",
+    "Security and audit data are controlled outside workload accounts",
+    "Human access is federated through an organization instance of IAM Identity Center",
+    "Automation uses short-lived credentials and cross-account roles",
+    "The management account contains no application workloads",
+    "Service control policies define maximum permissions but do not grant permissions",
+    "Account-level cost, security, logging, and backup controls are centrally observable"
+  ],
+  "organizational_units": [
+    {
+      "name": "Security",
+      "purpose": "Central audit, security operations, and immutable log ownership",
+      "accounts": [
+        "log-archive",
+        "security-tooling"
+      ],
+      "baseline_controls": [
+        "Protect organization trails and configuration history",
+        "Restrict direct human administration",
+        "Delegate supported security services from the management account",
+        "Prevent workload deployment"
+      ]
+    },
+    {
+      "name": "Infrastructure",
+      "purpose": "Shared platform capabilities that are not owned by a workload team",
+      "accounts": [
+        "shared-services",
+        "network"
+      ],
+      "baseline_controls": [
+        "Central artifact and automation services",
+        "Optional hybrid connectivity and shared DNS",
+        "No production business data",
+        "Changes require platform-owner approval"
+      ]
+    },
+    {
+      "name": "Workloads-NonProduction",
+      "purpose": "Development and pre-production validation",
+      "accounts": [
+        "cloudops-dev",
+        "cloudops-stage"
+      ],
+      "baseline_controls": [
+        "No production data",
+        "Restricted approved Regions",
+        "Mandatory ownership and expiration tags",
+        "Lower cost limits and short retention",
+        "Automated teardown for ephemeral environments"
+      ]
+    },
+    {
+      "name": "Workloads-Production",
+      "purpose": "Production workloads and production data",
+      "accounts": [
+        "cloudops-prod"
+      ],
+      "baseline_controls": [
+        "Change promotion only through approved pipelines",
+        "Persistent recovery controls",
+        "Stricter permission sets and separation of duties",
+        "Alarm routing and incident response enabled",
+        "No direct developer write access"
+      ]
+    },
+    {
+      "name": "Sandbox",
+      "purpose": "Time-bounded experimentation without production connectivity or data",
+      "accounts": [
+        "sandbox-users"
+      ],
+      "baseline_controls": [
+        "Hard budgets and short expiration",
+        "No access to production accounts",
+        "No organization-wide delegated administration",
+        "Restricted services and Regions"
+      ]
+    },
+    {
+      "name": "Suspended",
+      "purpose": "Quarantine for closed, compromised, or decommissioning accounts",
+      "accounts": [],
+      "baseline_controls": [
+        "Deny all non-essential activity",
+        "Preserve evidence and billing access",
+        "Require security-owner approval for movement out"
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "management",
+      "ou": "Root",
+      "purpose": "AWS Organizations, consolidated billing, and organization-level administration",
+      "workloads_allowed": false,
+      "human_access": "Break-glass and tightly controlled platform administration only"
+    },
+    {
+      "name": "log-archive",
+      "ou": "Security",
+      "purpose": "Central CloudTrail, Config, access logs, and long-term audit evidence",
+      "workloads_allowed": false,
+      "human_access": "Security audit read-only; restricted log administration"
+    },
+    {
+      "name": "security-tooling",
+      "ou": "Security",
+      "purpose": "Delegated administration for security services and investigation tooling",
+      "workloads_allowed": false,
+      "human_access": "Security engineering and incident response"
+    },
+    {
+      "name": "shared-services",
+      "ou": "Infrastructure",
+      "purpose": "Central CI/CD artifacts, package mirrors, shared automation, and optional observability integrations",
+      "workloads_allowed": false,
+      "human_access": "Platform engineering"
+    },
+    {
+      "name": "network",
+      "ou": "Infrastructure",
+      "purpose": "Reserved for hybrid connectivity, centralized DNS, inspection, and shared networking if required",
+      "workloads_allowed": false,
+      "human_access": "Network and platform engineering"
+    },
+    {
+      "name": "cloudops-dev",
+      "ou": "Workloads-NonProduction",
+      "purpose": "Developer integration environment with synthetic data",
+      "workloads_allowed": true,
+      "human_access": "Developers may administer workload resources within bounded permission sets"
+    },
+    {
+      "name": "cloudops-stage",
+      "ou": "Workloads-NonProduction",
+      "purpose": "Production-like validation, resilience tests, and release qualification",
+      "workloads_allowed": true,
+      "human_access": "Release engineering and read-only developer access"
+    },
+    {
+      "name": "cloudops-prod",
+      "ou": "Workloads-Production",
+      "purpose": "Production API, asynchronous processing, data, and operational telemetry",
+      "workloads_allowed": true,
+      "human_access": "Read-only operations by default; emergency elevation is time-bound and audited"
+    },
+    {
+      "name": "sandbox-users",
+      "ou": "Sandbox",
+      "purpose": "Isolated experiments with strict cost and service limits",
+      "workloads_allowed": true,
+      "human_access": "Named sandbox users only"
+    }
+  ],
+  "identity": {
+    "service": "AWS IAM Identity Center organization instance",
+    "identity_source": "Enterprise identity provider when available",
+    "permission_sets": [
+      "OrganizationReadOnly",
+      "SecurityAudit",
+      "SecurityIncidentResponse",
+      "PlatformAdministrator",
+      "WorkloadDeveloperNonProd",
+      "WorkloadOperatorReadOnly",
+      "ProductionDeployer",
+      "BillingReadOnly",
+      "BreakGlassAdministrator"
+    ],
+    "requirements": [
+      "MFA enforced at the identity provider",
+      "Group-based assignments",
+      "Short session durations for privileged permission sets",
+      "No shared users",
+      "Quarterly access review",
+      "Emergency access is separately monitored"
+    ]
+  },
+  "deployment": {
+    "source": "GitHub Actions",
+    "authentication": "GitHub OIDC",
+    "artifact_account": "shared-services",
+    "promotion_path": [
+      "cloudops-dev",
+      "cloudops-stage",
+      "cloudops-prod"
+    ],
+    "rules": [
+      "Build once and promote immutable artifacts",
+      "Each target account has a dedicated deployment role",
+      "Production deployment requires protected environment approval",
+      "The pipeline role cannot modify organization governance",
+      "Application roles cannot assume security or management roles",
+      "Rollback and post-deployment verification are mandatory"
+    ]
+  },
+  "central_services": {
+    "logging": {
+      "owner_account": "log-archive",
+      "controls": [
+        "Organization CloudTrail",
+        "AWS Config delivery and aggregation",
+        "S3 versioning and retention controls",
+        "Access logging for central buckets",
+        "Restricted delete and lifecycle permissions"
+      ]
+    },
+    "security": {
+      "owner_account": "security-tooling",
+      "delegated_administration_candidates": [
+        "Amazon GuardDuty",
+        "AWS Security Hub",
+        "Amazon Inspector",
+        "Amazon Macie when data classification requires it",
+        "IAM Access Analyzer"
+      ]
+    },
+    "cost_management": {
+      "owner_account": "management",
+      "controls": [
+        "Consolidated billing",
+        "AWS Budgets by account and workload",
+        "Cost anomaly detection",
+        "Cost allocation tags",
+        "Monthly owner review",
+        "Sandbox spending limits"
+      ]
+    },
+    "backup": {
+      "owner_account": "security-tooling",
+      "controls": [
+        "Organization backup policy when persistent environments exist",
+        "Cross-account backup vault ownership",
+        "Restore testing",
+        "Retention derived from RPO and compliance requirements"
+      ]
+    }
+  },
+  "networking": {
+    "default_architecture": "The serverless workload does not require a VPC for its core managed-service path",
+    "network_account_trigger": "Use centralized networking only when hybrid connectivity, private endpoints, inspection, or shared DNS is justified",
+    "production_requirements": [
+      "No public administrative endpoints",
+      "Explicit API exposure decision",
+      "Private connectivity for internal producers when required",
+      "Central DNS ownership documented",
+      "Network flow logging where VPCs exist"
+    ]
+  },
+  "data": {
+    "production_owner_account": "cloudops-prod",
+    "requirements": [
+      "Data classification approved",
+      "DynamoDB point-in-time recovery enabled",
+      "Encryption key ownership decision documented",
+      "Retention and deletion policy approved",
+      "Cross-account access denied by default",
+      "Restore evidence retained"
+    ]
+  },
+  "scp_strategy": {
+    "purpose": "Define maximum permissions and protect governance boundaries; SCPs do not grant permissions",
+    "deployment_order": [
+      "Test in a dedicated policy-staging OU",
+      "Attach to Sandbox",
+      "Attach to Workloads-NonProduction",
+      "Attach to Workloads-Production after validation",
+      "Apply stricter controls to Security and Suspended OUs"
+    ],
+    "planned_controls": [
+      "Prevent member accounts from leaving the organization",
+      "Restrict unapproved Regions with documented global-service exceptions",
+      "Protect organization logging and configuration services",
+      "Block creation of long-lived IAM access keys for workforce users",
+      "Prevent disabling security services outside delegated administration",
+      "Restrict high-risk services in Sandbox",
+      "Quarantine suspended accounts"
+    ]
+  },
+  "production_readiness_gates": [
+    "Well-Architected P0 and P1 blockers are closed or formally accepted",
+    "Authentication, authorization, and restricted CORS are implemented",
+    "RTO, RPO, SLO, and ownership are approved",
+    "Restore, rollback, and incident-response exercises have evidence",
+    "Cost budgets and anomaly detection are active",
+    "Central audit and security services are delegated and tested",
+    "Production access has separation of duties and protected approvals",
+    "DynamoDB Scan is removed from production access paths"
+  ]
+}
