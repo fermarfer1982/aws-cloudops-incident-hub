@@ -23,6 +23,7 @@ Plataforma serverless para recibir, clasificar y gestionar incidencias de infrae
 - Runbook para investigación y redrive controlado de mensajes en la DLQ.
 - Despliegue efímero manual con GitHub OIDC y credenciales STS temporales.
 - Destrucción automática y workflow independiente de limpieza de emergencia.
+- Autoevaluación AWS Well-Architected con riesgos, evidencias y backlog de remediación.
 
 ## Arquitectura MVP
 
@@ -86,8 +87,8 @@ bash scripts/seed_demo.sh
 ### Consultar la API
 
 ```bash
-curl http://localhost:8080/events | python -m json.tool
-curl http://localhost:8080/metrics | python -m json.tool
+curl http://localhost:8080/events | python3 -m json.tool
+curl http://localhost:8080/metrics | python3 -m json.tool
 ```
 
 ### Simular el contrato EventBridge → SQS en local
@@ -131,13 +132,19 @@ cd infrastructure && PYTHONPATH=. python -m pytest -q tests && cdk synth
 El comando siguiente inspecciona la plantilla sintetizada y falla si encuentra NAT Gateway, EC2, RDS, ALB, EKS, OpenSearch o ElastiCache:
 
 ```bash
-python scripts/check_zero_cost.py infrastructure/cdk.out/CloudOpsIncidentHubStack.template.json
+python3 scripts/check_zero_cost.py infrastructure/cdk.out/CloudOpsIncidentHubStack.template.json
 ```
 
 Los workflows OIDC también tienen guardrails estáticos:
 
 ```bash
-python scripts/check_oidc_workflows.py
+python3 scripts/check_oidc_workflows.py
+```
+
+La estructura y trazabilidad de la revisión Well-Architected se validan con:
+
+```bash
+python3 scripts/check_well_architected_review.py
 ```
 
 ## Endpoints
@@ -194,6 +201,33 @@ La configuración completa está en:
 
 Mantener estos workflows sin configurarlos ni ejecutarlos no crea recursos en AWS. Un despliegue real debe hacerse con créditos o Free Plan, alertas de gasto y revisión posterior; no se considera una garantía absoluta de 0,00 €.
 
+## AWS Well-Architected Review
+
+El repositorio contiene una autoevaluación versionada contra los seis pilares del AWS Well-Architected Framework:
+
+- Excelencia operativa.
+- Seguridad.
+- Fiabilidad.
+- Eficiencia del rendimiento.
+- Optimización de costes.
+- Sostenibilidad.
+
+La revisión distingue entre controles existentes, riesgos aceptados exclusivamente para el laboratorio y bloqueadores de producción. No se presenta como una auditoría externa ni como una revisión realizada en AWS Well-Architected Tool.
+
+Conclusiones principales:
+
+- La arquitectura es sólida como laboratorio serverless y demostración de portfolio.
+- El API anónimo y el CORS abierto son bloqueadores para producción.
+- Los accesos basados en DynamoDB Scan deben sustituirse antes de escalar.
+- RTO, RPO, SLO, ownership y restauración todavía no están definidos.
+- El lifecycle efímero y los guardrails reducen el riesgo de coste, pero no sustituyen AWS Budgets y controles de cuenta.
+
+Documentación:
+
+- [Revisión completa](docs/well-architected-review.md).
+- [Backlog de remediación](docs/well-architected-backlog.md).
+- [ADR-005: enfoque de autoevaluación](docs/adr/005-well-architected-self-assessment.md).
+
 ## GitHub Pages
 
 El workflow `.github/workflows/pages.yml` publica automáticamente el directorio `frontend`.
@@ -208,7 +242,7 @@ Después de subir el repositorio:
 
 La ejecución local y GitHub Pages no consumen servicios de AWS. La plantilla cloud está diseñada para despliegues efímeros y evita servicios con coste fijo o fácil de olvidar. No se mantiene un stack desplegado; cualquier despliegue real debe revisarse y destruirse al terminar la demostración.
 
-Consulta [docs/cost-control.md](docs/cost-control.md), [docs/event-driven-processing.md](docs/event-driven-processing.md), [docs/observability.md](docs/observability.md) y [docs/github-oidc-deployment.md](docs/github-oidc-deployment.md).
+Consulta [docs/cost-control.md](docs/cost-control.md), [docs/event-driven-processing.md](docs/event-driven-processing.md), [docs/observability.md](docs/observability.md), [docs/github-oidc-deployment.md](docs/github-oidc-deployment.md) y [docs/well-architected-review.md](docs/well-architected-review.md).
 
 ## Roadmap
 
@@ -221,7 +255,7 @@ Consulta [docs/cost-control.md](docs/cost-control.md), [docs/event-driven-proces
 - [x] Idempotencia, reintentos y respuestas parciales de lote.
 - [x] CloudWatch dashboard, alarmas y runbook operacional.
 - [x] GitHub OIDC para despliegue temporal y limpieza de emergencia.
-- [ ] Well-Architected review.
+- [x] Well-Architected review y backlog de remediación.
 - [ ] Arquitectura multi-account de producción.
 
 ## Licencia
