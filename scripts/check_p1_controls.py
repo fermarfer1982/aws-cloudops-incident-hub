@@ -92,14 +92,14 @@ def main() -> None:
         "Incident records RPO",
         "Incident service RTO",
         "game day",
-        "not an SLA",
+        "rather than an SLA",
     ):
         require(phrase in objectives, f"Recovery objectives missing concept: {phrase}")
 
     for phrase in (
         "restore-table-to-point-in-time",
         "restores into new tables",
-        "approved cutover",
+        "reviewed cutover change",
         "Post-cutover verification",
     ):
         require(phrase in restore, f"Restore runbook missing concept: {phrase}")
