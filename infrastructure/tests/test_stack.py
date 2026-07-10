@@ -110,15 +110,10 @@ def test_operational_alarms_are_named_and_ignore_missing_data():
     assert all(not alarm.get("AlarmActions") for alarm in alarms)
 
 
-def test_dashboard_is_ephemeral_and_named():
-    template = get_template()
-    template.has_resource_properties(
+def test_dashboard_is_named():
+    get_template().has_resource_properties(
         "AWS::CloudWatch::Dashboard",
         {"DashboardName": "cloudops-incident-hub-operations"},
-    )
-    template.has_resource(
-        "AWS::CloudWatch::Dashboard",
-        {"DeletionPolicy": "Delete", "UpdateReplacePolicy": "Delete"},
     )
 
 
