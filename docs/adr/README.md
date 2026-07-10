@@ -8,3 +8,4 @@
 - [ADR-006: Landing zone multi-account de producción](006-multi-account-production-landing-zone.md)
 - [ADR-007: Cognito, scopes JWT y patrones DynamoDB Query](007-cognito-query-access-patterns.md)
 - [ADR-008: Controles de fiabilidad persistente opcionales](008-optional-persistent-reliability-controls.md)
+- [ADR-009: Seguridad operacional y supply chain](009-operational-security-supply-chain.md)
