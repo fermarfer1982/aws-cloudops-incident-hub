@@ -16,18 +16,27 @@ Plataforma serverless para recibir, clasificar y gestionar incidencias de infrae
 - Políticas IAM limitadas al recurso requerido.
 - Guardrails automáticos contra recursos de alto riesgo de coste.
 - Dashboard público con datos de demostración.
-- Base preparada para evolucionar a EventBridge, SQS y DLQ.
+- Procesamiento asíncrono con EventBridge, SQS, Lambda y Dead Letter Queue.
+- Idempotencia mediante identificadores deterministas y escrituras condicionales.
+- Respuestas parciales de lotes SQS para reintentar solo los mensajes fallidos.
 
 ## Arquitectura MVP
 
 ```mermaid
 flowchart LR
-    S[Servidor / agente] --> API[FastAPI local o API Gateway]
-    API --> APP[Python + Mangum]
-    APP --> DB[(DynamoDB Local o DynamoDB)]
+    S[Servidor / agente] --> API[API Gateway + Lambda de ingesta]
+    API --> EB[EventBridge custom bus]
+    EB --> Q[SQS processing queue]
+    Q --> P[Lambda processor]
+    Q -. tras 3 fallos .-> DLQ[SQS Dead Letter Queue]
+    P --> DB[(DynamoDB)]
+    LOCAL[Docker local] --> DIRECT[Procesamiento síncrono]
+    DIRECT --> DDBL[(DynamoDB Local)]
     GH[GitHub Actions] --> CI[Lint + Tests + CDK Synth]
-    P[GitHub Pages] --> UI[Dashboard demo]
+    PAGES[GitHub Pages] --> UI[Dashboard demo]
 ```
+
+En local, la API utiliza un adaptador síncrono para no depender de servicios cloud. En AWS, `POST /events` publica el evento en EventBridge y devuelve `202 Accepted`; SQS desacopla la ingesta del procesamiento y la DLQ conserva los mensajes que superan el límite de reintentos.
 
 ## Inicio rápido en Ubuntu Server
 
@@ -71,6 +80,14 @@ curl http://localhost:8080/events | python -m json.tool
 curl http://localhost:8080/metrics | python -m json.tool
 ```
 
+### Simular el contrato EventBridge → SQS en local
+
+```bash
+make simulate-async
+```
+
+Este comando ejecuta el handler de la Lambda procesadora dentro del contenedor, usando un sobre con el mismo formato que recibiría desde SQS, y persiste la incidencia en DynamoDB Local.
+
 Documentación OpenAPI:
 
 ```text
@@ -112,7 +129,7 @@ python scripts/check_zero_cost.py infrastructure/cdk.out/CloudOpsIncidentHubStac
 | Método | Ruta | Función |
 |---|---|---|
 | GET | `/health` | Estado de la API |
-| POST | `/events` | Registrar y clasificar una incidencia |
+| POST | `/events` | Registrar localmente o aceptar un evento para procesamiento asíncrono |
 | GET | `/events` | Listar y filtrar incidencias |
 | PATCH | `/events/{id}/status` | Cambiar el estado |
 | GET | `/metrics` | Resumen operacional |
@@ -144,7 +161,7 @@ Después de subir el repositorio:
 
 La ejecución local y GitHub Pages no consumen servicios de AWS. La plantilla cloud está diseñada para despliegues efímeros y evita servicios con coste fijo o fácil de olvidar.
 
-Consulta [docs/cost-control.md](docs/cost-control.md).
+Consulta [docs/cost-control.md](docs/cost-control.md) y [docs/event-driven-processing.md](docs/event-driven-processing.md).
 
 ## Roadmap
 
@@ -153,8 +170,8 @@ Consulta [docs/cost-control.md](docs/cost-control.md).
 - [x] Dashboard público.
 - [x] AWS CDK y tests de infraestructura.
 - [x] CI y guardrails de coste.
-- [ ] EventBridge, SQS y Dead Letter Queue.
-- [ ] Idempotencia y reintentos.
+- [x] EventBridge, SQS y Dead Letter Queue.
+- [x] Idempotencia, reintentos y respuestas parciales de lote.
 - [ ] CloudWatch dashboard y alarmas.
 - [ ] GitHub OIDC para despliegue temporal.
 - [ ] Well-Architected review.

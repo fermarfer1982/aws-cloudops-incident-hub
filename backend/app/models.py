@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -44,6 +44,7 @@ class StatusUpdate(BaseModel):
 
 class Incident(BaseModel):
     incident_id: str
+    event_id: str | None = None
     source: str
     site: str
     type: str
@@ -54,6 +55,14 @@ class Incident(BaseModel):
     status: IncidentStatus
     created_at: datetime
     updated_at: datetime
+
+
+class EventAccepted(BaseModel):
+    event_id: str
+    incident_id: str
+    status: Literal["accepted"] = "accepted"
+    mode: Literal["asynchronous"] = "asynchronous"
+    received_at: datetime
 
 
 class Metrics(BaseModel):

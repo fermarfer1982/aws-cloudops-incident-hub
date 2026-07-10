@@ -79,8 +79,18 @@ class IncidentRepository:
                     raise
             time.sleep(1)
 
-    def put(self, incident: dict[str, Any]) -> None:
-        self._table.put_item(Item=_to_dynamodb(incident))
+    def put_if_absent(self, incident: dict[str, Any]) -> bool:
+        try:
+            self._table.put_item(
+                Item=_to_dynamodb(incident),
+                ConditionExpression="attribute_not_exists(incident_id)",
+            )
+            return True
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code")
+            if code == "ConditionalCheckFailedException":
+                return False
+            raise
 
     def get(self, incident_id: str) -> dict[str, Any] | None:
         response = self._table.get_item(Key={"incident_id": incident_id})

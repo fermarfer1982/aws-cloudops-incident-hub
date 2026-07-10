@@ -13,8 +13,12 @@ def get_template() -> Template:
 def test_expected_serverless_resources_are_created():
     template = get_template()
     template.resource_count_is("AWS::DynamoDB::Table", 1)
-    template.resource_count_is("AWS::Lambda::Function", 1)
+    template.resource_count_is("AWS::Lambda::Function", 2)
     template.resource_count_is("AWS::ApiGatewayV2::Api", 1)
+    template.resource_count_is("AWS::Events::EventBus", 1)
+    template.resource_count_is("AWS::Events::Rule", 1)
+    template.resource_count_is("AWS::SQS::Queue", 2)
+    template.resource_count_is("AWS::Lambda::EventSourceMapping", 1)
 
 
 def test_dynamodb_is_on_demand_and_ephemeral():
@@ -32,16 +36,56 @@ def test_dynamodb_is_on_demand_and_ephemeral():
     )
 
 
-def test_lambda_has_concurrency_and_short_timeout():
+def test_lambdas_have_bounded_compute():
     template = get_template()
     template.has_resource_properties(
         "AWS::Lambda::Function",
         {
             "ReservedConcurrentExecutions": 2,
-            "Timeout": 10,
             "MemorySize": 256,
             "Runtime": "python3.13",
             "Architectures": ["arm64"],
+        },
+    )
+
+
+def test_processing_queue_has_encryption_and_dlq():
+    template = get_template()
+    template.has_resource_properties(
+        "AWS::SQS::Queue",
+        {
+            "SqsManagedSseEnabled": True,
+            "VisibilityTimeout": 60,
+            "MessageRetentionPeriod": 86400,
+            "RedrivePolicy": {
+                "deadLetterTargetArn": Match.any_value(),
+                "maxReceiveCount": 3,
+            },
+        },
+    )
+
+
+def test_sqs_mapping_reports_partial_batch_failures():
+    template = get_template()
+    template.has_resource_properties(
+        "AWS::Lambda::EventSourceMapping",
+        {
+            "BatchSize": 10,
+            "MaximumBatchingWindowInSeconds": 5,
+            "FunctionResponseTypes": ["ReportBatchItemFailures"],
+        },
+    )
+
+
+def test_eventbridge_rule_filters_incident_events():
+    template = get_template()
+    template.has_resource_properties(
+        "AWS::Events::Rule",
+        {
+            "EventPattern": {
+                "source": ["cloudops.incident-hub"],
+                "detail-type": ["InfrastructureIncidentReceived"],
+            },
         },
     )
 
@@ -65,7 +109,7 @@ def test_no_known_high_cost_resources_exist():
     assert found == set()
 
 
-def test_lambda_policy_is_scoped_to_the_table():
+def test_lambda_policy_is_scoped_to_project_resources():
     template = get_template()
     template.has_resource_properties(
         "AWS::IAM::Policy",
