@@ -4,6 +4,11 @@ from __future__ import annotations
 from aws_cdk import App, Environment, Tags
 
 from cloudops_infra.reliability import apply_reliability_controls
+from cloudops_infra.security import (
+    DEFAULT_API_BURST_LIMIT,
+    DEFAULT_API_RATE_LIMIT,
+    apply_operational_security_controls,
+)
 from cloudops_infra.stack import (
     DEFAULT_ALLOWED_ORIGINS,
     DEFAULT_CALLBACK_URLS,
@@ -49,9 +54,35 @@ def optional_string_context(app: App, name: str) -> str | None:
     return result or None
 
 
+def positive_float_context(app: App, name: str, default: float) -> float:
+    value = app.node.try_get_context(name)
+    result = default if value is None else float(value)
+    if result <= 0:
+        raise ValueError(f"CDK context {name} must be greater than zero")
+    return result
+
+
+def positive_int_context(app: App, name: str, default: int) -> int:
+    value = app.node.try_get_context(name)
+    result = default if value is None else int(value)
+    if result <= 0:
+        raise ValueError(f"CDK context {name} must be greater than zero")
+    return result
+
+
 app = App()
 persistent_environment = bool_context(app, "persistent_environment")
 alarm_notification_email = optional_string_context(app, "alarm_notification_email")
+api_throttling_rate_limit = positive_float_context(
+    app,
+    "api_throttling_rate_limit",
+    DEFAULT_API_RATE_LIMIT,
+)
+api_throttling_burst_limit = positive_int_context(
+    app,
+    "api_throttling_burst_limit",
+    DEFAULT_API_BURST_LIMIT,
+)
 
 stack = CloudOpsIncidentHubStack(
     app,
@@ -68,6 +99,11 @@ stack = CloudOpsIncidentHubStack(
     oauth_logout_urls=csv_context(app, "oauth_logout_urls", DEFAULT_CALLBACK_URLS),
 )
 
+apply_operational_security_controls(
+    stack,
+    api_throttling_rate_limit=api_throttling_rate_limit,
+    api_throttling_burst_limit=api_throttling_burst_limit,
+)
 apply_reliability_controls(
     stack,
     persistent_environment=persistent_environment,
