@@ -23,23 +23,23 @@ Este backlog convierte los hallazgos de `docs/well-architected-review.md` en acc
 | WA-006 | P1 | Reliability | Definir RTO y RPO | Documento aprobado con valores, responsables y supuestos | Requisitos de negocio | Definido en referencia; pendiente aprobación |
 | WA-007 | P1 | Reliability | Activar PITR para entornos persistentes | Test CDK verifica `PointInTimeRecoverySpecification` | WA-006 | Completado en referencia |
 | WA-008 | P1 | Reliability | Crear y probar restauración | Runbook y evidencia de un restore exitoso | WA-007 | Runbook completado; restore real pendiente |
-| WA-009 | P1 | Operational excellence | Definir SLO y error budget | SLO de disponibilidad, latencia y procesamiento asíncrono | Datos de carga y negocio | Definido en referencia; pendiente baseline y aprobación |
+| WA-009 | P1 | Operational excellence | Definir SLO y error budget | SLO de disponibilidad, latencia y procesamiento asíncrono | Datos de carga y negocio | Baseline local registrado; baseline AWS y aprobación pendientes |
 | WA-010 | P1 | Operational excellence | Asignar ownership | Matriz RACI o tabla con owner técnico, seguridad, coste y operación | Organización objetivo | Pendiente |
 | WA-011 | P1 | Cost optimization | Configurar AWS Budget y anomalías de coste | Evidencia de presupuesto, umbrales y receptores | Cuenta AWS de laboratorio | Checklist completado; configuración de cuenta pendiente |
-| WA-012 | P1 | Security | Añadir throttling y protección frente a abuso | Límites explícitos en API Gateway; WAF evaluado si aplica | Perfil de tráfico | Throttling completado en referencia; carga y edge protection pendientes |
+| WA-012 | P1 | Security | Añadir throttling y protección frente a abuso | Límites explícitos en API Gateway; WAF evaluado si aplica | Perfil de tráfico | Throttling completado; baseline local aprobado, carga AWS y edge protection pendientes |
 | WA-013 | P1 | Security | Añadir análisis de dependencias y secretos | Dependabot/CodeQL/secret scanning o herramienta equivalente | Política GitHub | Automatización completada; configuración y alertas reales pendientes |
 | WA-014 | P1 | Operational excellence | Enrutar alarmas a un canal real | Una alarma de prueba llega a un receptor autorizado | SNS/Chatbot/PagerDuty o equivalente | IaC opcional completada; receptor real pendiente |
 | WA-015 | P1 | Reliability | Documentar estrategia regional | Decisión explícita: single-region recovery o multi-region | WA-006 | Single-region documentado; decisión regional pendiente |
-| WA-016 | P2 | Performance | Implementar paginación con continuation token | `GET /events` recupera páginas acotadas mediante cursor y sin Scan | WA-004 | Completado en referencia; integración de cliente incluida |
-| WA-017 | P2 | Performance | Ejecutar pruebas de carga | Informe con p50, p95, errores, throttles, backlog y coste estimado | Tráfico representativo | Harness y plantilla completados; ejecución representativa pendiente |
-| WA-018 | P2 | Performance | Ajustar memoria, concurrencia y batch | Parámetros sustentados por mediciones y comparativa | WA-017 | Pendiente de baseline |
+| WA-016 | P2 | Performance | Implementar paginación con continuation token | `GET /events` recupera páginas acotadas mediante cursor y sin Scan | WA-004 | Completado y validado localmente con 365 IDs únicos y 0 duplicados |
+| WA-017 | P2 | Performance | Ejecutar pruebas de carga | Informe con p50, p95, errores, throttles, backlog y coste estimado | Tráfico representativo | Baseline local completado; ejecución AWS representativa pendiente |
+| WA-018 | P2 | Performance | Ajustar memoria, concurrencia y batch | Parámetros sustentados por mediciones y comparativa | WA-017 | Pendiente de baseline AWS; sin tuning especulativo |
 | WA-019 | P2 | Operational excellence | Ejecutar game day | Evidencia de fallo Lambda, backlog, DLQ y recuperación | WA-014 | Pendiente |
 | WA-020 | P2 | Operational excellence | Añadir runbook de release y rollback | Criterios de rollback y pasos comprobables | Estrategia de release | Pendiente |
 | WA-021 | P2 | Security | Definir clasificación y retención de datos | Tabla de categorías, retención, cifrado y borrado | Requisitos legales | Pendiente |
 | WA-022 | P2 | Security | Generar SBOM | Artifact o release incluye SBOM verificable | Herramienta seleccionada | Workflow completado; artifact real pendiente de ejecución |
-| WA-023 | P2 | Cost optimization | Medir coste por 1.000 incidencias | Estimación low/expected/peak con supuestos versionados | WA-017 | Pendiente |
+| WA-023 | P2 | Cost optimization | Medir coste por 1.000 incidencias | Estimación low/expected/peak con supuestos versionados | WA-017 | Pendiente de baseline AWS |
 | WA-024 | P2 | Cost optimization | Ampliar tags obligatorios | Owner, application, environment, cost-center y expiration | Convención de tagging | Pendiente |
-| WA-025 | P2 | Sustainability | Definir KPI de eficiencia | Incidencias por invocación y GB-second, retención y tendencia | WA-017 | Pendiente |
+| WA-025 | P2 | Sustainability | Definir KPI de eficiencia | Incidencias por invocación y GB-second, retención y tendencia | WA-017 | Pendiente de telemetría AWS |
 | WA-026 | P2 | Sustainability | Revisar retención por valor de negocio | Política aplicada a tabla, logs, artifacts y DLQ | WA-021 | Pendiente |
 | WA-027 | P3 | Reliability | Probar fallo regional | Evidencia de recuperación en región alternativa si se requiere | WA-015 | Pendiente |
 | WA-028 | P3 | Security | Diseñar cuenta central de seguridad | CloudTrail, GuardDuty, Security Hub y agregación organizativa | Arquitectura multi-account | Pendiente |
@@ -56,9 +56,9 @@ Estos riesgos no deben confundirse con controles de producción completados:
 - Las alarmas no tienen acciones de notificación salvo que se configure un receptor explícito.
 - Los logs del perfil efímero tienen retención de un día.
 - Concurrencia reservada muy baja.
-- Los límites de throttling no se han validado con tráfico representativo.
+- Los límites de throttling no se han validado contra API Gateway y Lambda con tráfico AWS representativo.
 - GitHub push protection y otras opciones de seguridad requieren evidencia de configuración del repositorio.
-- El framework de carga existe, pero todavía no hay un baseline representativo aprobado.
+- El baseline local pasa los umbrales provisionales, pero no mide API Gateway, Cognito, Lambda, EventBridge, SQS ni DynamoDB gestionado.
 
 Los controles P0 se consideran completados en la implementación de referencia. Los controles P1 de recuperación, operación y seguridad disponen de IaC, automatización o documentación parcial, pero requieren aprobación, despliegue y evidencia real antes de aceptar usuarios o datos reales.
 
@@ -73,7 +73,7 @@ El workload no debe describirse como production-ready hasta que, como mínimo:
 5. No existan scans completos en rutas operativas principales y se haya probado paginación con carga representativa.
 6. Se hayan configurado controles de coste de cuenta.
 7. CodeQL, Dependabot, secret scanning y SBOM produzcan evidencia real y tengan un proceso de triage.
-8. El baseline justifique memoria, concurrencia, batch y throttling.
+8. El baseline AWS justifique memoria, concurrencia, batch y throttling.
 9. La revisión Well-Architected se repita con evidencias de un entorno real.
 
 ## Cadencia de revisión
