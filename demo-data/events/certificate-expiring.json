@@ -1,0 +1,8 @@
+{
+  "source": "web-corporativa",
+  "site": "Madrid",
+  "type": "CERTIFICATE_EXPIRING",
+  "message": "El certificado TLS caduca en 12 días.",
+  "value": 12,
+  "metadata": {"domain": "example.internal"}
+}

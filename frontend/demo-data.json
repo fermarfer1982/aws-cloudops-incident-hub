@@ -1,0 +1,67 @@
+[
+  {
+    "incident_id": "INC-20260710-A1B2C3D4",
+    "source": "pbs-01",
+    "site": "Calahorra",
+    "type": "BACKUP_FAILED",
+    "message": "La copia nocturna de srv-files-01 no finalizó correctamente.",
+    "value": null,
+    "metadata": {"job": "vm-105", "duration_minutes": 47},
+    "severity": "critical",
+    "status": "open",
+    "created_at": "2026-07-10T06:45:00+00:00",
+    "updated_at": "2026-07-10T06:45:00+00:00"
+  },
+  {
+    "incident_id": "INC-20260710-E5F6A7B8",
+    "source": "proxmox-02",
+    "site": "Almeria",
+    "type": "DISK_USAGE_HIGH",
+    "message": "El almacenamiento local-lvm ha superado el umbral operativo.",
+    "value": 88.4,
+    "metadata": {"volume": "local-lvm"},
+    "severity": "warning",
+    "status": "investigating",
+    "created_at": "2026-07-10T07:10:00+00:00",
+    "updated_at": "2026-07-10T07:25:00+00:00"
+  },
+  {
+    "incident_id": "INC-20260710-C9D0E1F2",
+    "source": "pfsense-hub",
+    "site": "Calahorra",
+    "type": "SITE_OFFLINE",
+    "message": "La sede remota no responde a las comprobaciones de conectividad.",
+    "value": null,
+    "metadata": {"peer": "wireguard-almeria"},
+    "severity": "critical",
+    "status": "resolved",
+    "created_at": "2026-07-10T04:20:00+00:00",
+    "updated_at": "2026-07-10T04:42:00+00:00"
+  },
+  {
+    "incident_id": "INC-20260709-11223344",
+    "source": "web-corporativa",
+    "site": "Madrid",
+    "type": "CERTIFICATE_EXPIRING",
+    "message": "El certificado TLS caduca en 12 días.",
+    "value": 12,
+    "metadata": {"domain": "example.internal"},
+    "severity": "warning",
+    "status": "open",
+    "created_at": "2026-07-09T16:30:00+00:00",
+    "updated_at": "2026-07-09T16:30:00+00:00"
+  },
+  {
+    "incident_id": "INC-20260709-55667788",
+    "source": "zabbix-01",
+    "site": "Calahorra",
+    "type": "SERVICE_RESTARTED",
+    "message": "El servicio de impresión se reinició automáticamente.",
+    "value": null,
+    "metadata": {"service": "spooler"},
+    "severity": "info",
+    "status": "resolved",
+    "created_at": "2026-07-09T12:05:00+00:00",
+    "updated_at": "2026-07-09T12:06:00+00:00"
+  }
+]

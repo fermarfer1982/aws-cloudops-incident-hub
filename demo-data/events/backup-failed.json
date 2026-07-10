@@ -1,0 +1,7 @@
+{
+  "source": "pbs-01",
+  "site": "Calahorra",
+  "type": "BACKUP_FAILED",
+  "message": "La copia de seguridad de vm-105 ha fallado.",
+  "metadata": {"job": "vm-105", "storage": "pbs-nas"}
+}

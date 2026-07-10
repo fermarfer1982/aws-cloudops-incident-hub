@@ -1,0 +1,8 @@
+{
+  "source": "proxmox-02",
+  "site": "Almeria",
+  "type": "DISK_USAGE_HIGH",
+  "message": "El volumen local-lvm ha superado el 85%.",
+  "value": 88.4,
+  "metadata": {"volume": "local-lvm"}
+}

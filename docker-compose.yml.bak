@@ -1,0 +1,46 @@
+services:
+  dynamodb-local:
+    image: amazon/dynamodb-local:latest
+    container_name: cloudops-dynamodb
+    command: "-jar DynamoDBLocal.jar -sharedDb -dbPath ./data"
+    working_dir: /home/dynamodblocal
+    user: root
+
+    volumes:
+      - dynamodb_data:/home/dynamodblocal/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:8000/shell/ >/dev/null || exit 0"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+    container_name: cloudops-backend
+    environment:
+      AWS_REGION: eu-west-1
+      TABLE_NAME: cloudops-incidents
+      DYNAMODB_ENDPOINT: http://dynamodb-local:8000
+      AWS_ACCESS_KEY_ID: local
+      AWS_SECRET_ACCESS_KEY: local
+      CORS_ORIGINS: "*"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - dynamodb-local
+    restart: unless-stopped
+
+  frontend:
+    image: nginx:1.27-alpine
+    container_name: cloudops-frontend
+    ports:
+      - "8081:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  dynamodb_data:

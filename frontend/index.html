@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Dashboard demostrativo de una arquitectura serverless en AWS para gestión de incidencias CloudOps.">
+  <title>AWS CloudOps Incident Hub</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">AWS SERVERLESS PORTFOLIO PROJECT</p>
+      <h1>CloudOps Incident Hub</h1>
+      <p class="subtitle">Recepción, clasificación y seguimiento de incidencias de infraestructura.</p>
+    </div>
+    <div class="mode-panel">
+      <label for="mode">Fuente de datos</label>
+      <select id="mode">
+        <option value="demo">Demo pública</option>
+        <option value="local">API local</option>
+      </select>
+      <span id="connection" class="connection demo">Demo activa</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="architecture-note">
+      <strong>Arquitectura objetivo:</strong>
+      API Gateway → Lambda → DynamoDB. La siguiente fase añadirá EventBridge, SQS y DLQ.
+    </section>
+
+    <section id="cards" class="cards"></section>
+
+    <section class="panel controls">
+      <div>
+        <label for="severityFilter">Severidad</label>
+        <select id="severityFilter">
+          <option value="">Todas</option>
+          <option value="critical">Crítica</option>
+          <option value="warning">Aviso</option>
+          <option value="info">Información</option>
+        </select>
+      </div>
+      <div>
+        <label for="statusFilter">Estado</label>
+        <select id="statusFilter">
+          <option value="">Todos</option>
+          <option value="open">Abierto</option>
+          <option value="investigating">Investigando</option>
+          <option value="resolved">Resuelto</option>
+        </select>
+      </div>
+      <div>
+        <label for="siteFilter">Sede</label>
+        <select id="siteFilter"><option value="">Todas</option></select>
+      </div>
+      <button id="refreshButton" class="secondary">Actualizar</button>
+      <button id="simulateButton">Simular incidencia</button>
+    </section>
+
+    <section class="panel">
+      <div class="panel-heading">
+        <div>
+          <h2>Incidencias</h2>
+          <p id="resultCount"></p>
+        </div>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Severidad</th>
+              <th>Incidencia</th>
+              <th>Origen</th>
+              <th>Sede</th>
+              <th>Estado</th>
+              <th>Fecha</th>
+            </tr>
+          </thead>
+          <tbody id="incidentTable"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel architecture">
+      <h2>Decisiones de arquitectura</h2>
+      <div class="decision-grid">
+        <article><strong>Serverless</strong><span>Escalado bajo demanda y sin servidores permanentes en AWS.</span></article>
+        <article><strong>IaC</strong><span>AWS CDK en Python sintetiza CloudFormation reproducible.</span></article>
+        <article><strong>Cost guardrails</strong><span>Sin NAT Gateway, EC2, RDS, ALB, EKS u OpenSearch.</span></article>
+        <article><strong>Portable</strong><span>La misma API funciona en Docker local y en Lambda mediante Mangum.</span></article>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="simulateDialog">
+    <form id="simulateForm" method="dialog">
+      <div class="dialog-heading">
+        <h2>Simular incidencia</h2>
+        <button type="button" id="closeDialog" class="icon-button">×</button>
+      </div>
+      <label>Origen<input name="source" value="proxmox-01" required></label>
+      <label>Sede<input name="site" value="Calahorra" required></label>
+      <label>Tipo
+        <select name="type">
+          <option>BACKUP_FAILED</option>
+          <option>DISK_USAGE_HIGH</option>
+          <option>SERVICE_DOWN</option>
+          <option>CERTIFICATE_EXPIRING</option>
+          <option>LATENCY_HIGH</option>
+        </select>
+      </label>
+      <label>Mensaje<textarea name="message" required>Incidencia generada desde el dashboard.</textarea></label>
+      <label>Valor opcional<input name="value" type="number" step="0.1" value="92"></label>
+      <button type="submit">Enviar evento</button>
+      <p id="formFeedback" class="feedback"></p>
+    </form>
+  </dialog>
+
+  <footer>
+    <span>Portfolio técnico · AWS Solutions Architecture · Zero-cost local lab</span>
+    <a href="https://github.com/" rel="noreferrer">Código en GitHub</a>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

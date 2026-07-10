@@ -1,0 +1,53 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements-dev.txt
+          pip install -r infrastructure/requirements.txt
+          npm install --global aws-cdk
+
+      - name: Lint
+        run: ruff check backend tests infrastructure scripts
+
+      - name: Test application
+        env:
+          PYTHONPATH: backend
+          AWS_DEFAULT_REGION: eu-west-1
+          AWS_ACCESS_KEY_ID: testing
+          AWS_SECRET_ACCESS_KEY: testing
+        run: pytest -q tests
+
+      - name: Test infrastructure
+        working-directory: infrastructure
+        run: pytest -q tests
+
+      - name: Synthesize CloudFormation
+        working-directory: infrastructure
+        run: cdk synth --quiet
+
+      - name: Enforce cost guardrails
+        run: python scripts/check_zero_cost.py infrastructure/cdk.out/CloudOpsIncidentHubStack.template.json
