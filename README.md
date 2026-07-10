@@ -21,6 +21,8 @@ Plataforma serverless para recibir, clasificar y gestionar incidencias de infrae
 - Respuestas parciales de lotes SQS para reintentar solo los mensajes fallidos.
 - Dashboard de CloudWatch y alarmas operativas basadas en métricas nativas.
 - Runbook para investigación y redrive controlado de mensajes en la DLQ.
+- Despliegue efímero manual con GitHub OIDC y credenciales STS temporales.
+- Destrucción automática y workflow independiente de limpieza de emergencia.
 
 ## Arquitectura MVP
 
@@ -39,6 +41,8 @@ flowchart LR
     LOCAL[Docker local] --> DIRECT[Procesamiento síncrono]
     DIRECT --> DDBL[(DynamoDB Local)]
     GH[GitHub Actions] --> CI[Lint + Tests + CDK Synth]
+    GH -. OIDC manual .-> AWS[AWS deployment efímero]
+    AWS -. destroy .-> CLEAN[Stack eliminado]
     PAGES[GitHub Pages] --> UI[Dashboard demo]
 ```
 
@@ -130,6 +134,12 @@ El comando siguiente inspecciona la plantilla sintetizada y falla si encuentra N
 python scripts/check_zero_cost.py infrastructure/cdk.out/CloudOpsIncidentHubStack.template.json
 ```
 
+Los workflows OIDC también tienen guardrails estáticos:
+
+```bash
+python scripts/check_oidc_workflows.py
+```
+
 ## Endpoints
 
 | Método | Ruta | Función |
@@ -168,6 +178,22 @@ No se configuran acciones SNS automáticas y no se emiten métricas personalizad
 - [Runbook de la Dead Letter Queue](docs/runbook-dlq.md).
 - [ADR-003: métricas nativas de CloudWatch](docs/adr/003-native-cloudwatch-observability.md).
 
+## Despliegue efímero con GitHub OIDC
+
+El workflow `Deploy ephemeral AWS lab` se ejecuta solo de forma manual desde `main`. Utiliza un token OIDC de GitHub para obtener credenciales STS temporales, despliega el stack, ejecuta pruebas de humo, conserva evidencias durante siete días y llama a `cdk destroy` aunque falle una prueba anterior.
+
+No se almacenan access keys de AWS en GitHub. La política de confianza está restringida al repositorio y al environment `aws-ephemeral`.
+
+También existe `Destroy ephemeral AWS lab` para una limpieza manual de emergencia cuando una ejecución no alcanza su fase de destrucción.
+
+La configuración completa está en:
+
+- [Despliegue con GitHub OIDC](docs/github-oidc-deployment.md).
+- [Plantilla del rol federado](bootstrap/github-oidc-role.yml).
+- [ADR-004: despliegue efímero mediante OIDC](docs/adr/004-github-oidc-ephemeral-deployment.md).
+
+Mantener estos workflows sin configurarlos ni ejecutarlos no crea recursos en AWS. Un despliegue real debe hacerse con créditos o Free Plan, alertas de gasto y revisión posterior; no se considera una garantía absoluta de 0,00 €.
+
 ## GitHub Pages
 
 El workflow `.github/workflows/pages.yml` publica automáticamente el directorio `frontend`.
@@ -182,7 +208,7 @@ Después de subir el repositorio:
 
 La ejecución local y GitHub Pages no consumen servicios de AWS. La plantilla cloud está diseñada para despliegues efímeros y evita servicios con coste fijo o fácil de olvidar. No se mantiene un stack desplegado; cualquier despliegue real debe revisarse y destruirse al terminar la demostración.
 
-Consulta [docs/cost-control.md](docs/cost-control.md), [docs/event-driven-processing.md](docs/event-driven-processing.md) y [docs/observability.md](docs/observability.md).
+Consulta [docs/cost-control.md](docs/cost-control.md), [docs/event-driven-processing.md](docs/event-driven-processing.md), [docs/observability.md](docs/observability.md) y [docs/github-oidc-deployment.md](docs/github-oidc-deployment.md).
 
 ## Roadmap
 
@@ -194,7 +220,7 @@ Consulta [docs/cost-control.md](docs/cost-control.md), [docs/event-driven-proces
 - [x] EventBridge, SQS y Dead Letter Queue.
 - [x] Idempotencia, reintentos y respuestas parciales de lote.
 - [x] CloudWatch dashboard, alarmas y runbook operacional.
-- [ ] GitHub OIDC para despliegue temporal.
+- [x] GitHub OIDC para despliegue temporal y limpieza de emergencia.
 - [ ] Well-Architected review.
 - [ ] Arquitectura multi-account de producción.
 
