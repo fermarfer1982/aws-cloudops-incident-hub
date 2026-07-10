@@ -73,11 +73,11 @@ def main() -> None:
     for blocker in PRODUCTION_BLOCKERS:
         require(blocker in review, f"Missing production blocker in review: {blocker}")
 
-    backlog_ids = re.findall(r"\| (WA-\d{3}) \|", backlog)
+    backlog_ids = re.findall(r"^\| (WA-\d{3}) \|", backlog, flags=re.MULTILINE)
     require(len(backlog_ids) >= 25, "The remediation backlog is unexpectedly small")
     require(
         len(backlog_ids) == len(set(backlog_ids)),
-        "Duplicate Well-Architected backlog identifiers found",
+        "Duplicate primary Well-Architected backlog identifiers found",
     )
 
     for priority in ("P0", "P1", "P2", "P3"):
