@@ -53,3 +53,6 @@ jobs:
 
       - name: Enforce cost guardrails
         run: python scripts/check_zero_cost.py infrastructure/cdk.out/CloudOpsIncidentHubStack.template.json
+
+      - name: Enforce OIDC deployment guardrails
+        run: python scripts/check_oidc_workflows.py
