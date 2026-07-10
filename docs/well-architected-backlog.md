@@ -31,7 +31,7 @@ Este backlog convierte los hallazgos de `docs/well-architected-review.md` en acc
 | WA-014 | P1 | Operational excellence | Enrutar alarmas a un canal real | Una alarma de prueba llega a un receptor autorizado | SNS/Chatbot/PagerDuty o equivalente | IaC opcional completada; receptor real pendiente |
 | WA-015 | P1 | Reliability | Documentar estrategia regional | Decisión explícita: single-region recovery o multi-region | WA-006 | Single-region documentado; decisión regional pendiente |
 | WA-016 | P2 | Performance | Implementar paginación con continuation token | `GET /events` recupera páginas acotadas mediante cursor y sin Scan | WA-004 | Completado y validado localmente con 365 IDs únicos y 0 duplicados |
-| WA-017 | P2 | Performance | Ejecutar pruebas de carga | Informe con p50, p95, errores, throttles, backlog y coste estimado | Tráfico representativo | Baseline local completado; ejecución AWS representativa pendiente |
+| WA-017 | P2 | Performance | Ejecutar pruebas de carga | Informe con p50, p95, errores, throttles, backlog y coste estimado | Tráfico representativo | Baseline local completado; workflow AWS efímero controlado preparado, ejecución pendiente |
 | WA-018 | P2 | Performance | Ajustar memoria, concurrencia y batch | Parámetros sustentados por mediciones y comparativa | WA-017 | Pendiente de baseline AWS; sin tuning especulativo |
 | WA-019 | P2 | Operational excellence | Ejecutar game day | Evidencia de fallo Lambda, backlog, DLQ y recuperación | WA-014 | Pendiente |
 | WA-020 | P2 | Operational excellence | Añadir runbook de release y rollback | Criterios de rollback y pasos comprobables | Estrategia de release | Pendiente |
@@ -59,6 +59,7 @@ Estos riesgos no deben confundirse con controles de producción completados:
 - Los límites de throttling no se han validado contra API Gateway y Lambda con tráfico AWS representativo.
 - GitHub push protection y otras opciones de seguridad requieren evidencia de configuración del repositorio.
 - El baseline local pasa los umbrales provisionales, pero no mide API Gateway, Cognito, Lambda, EventBridge, SQS ni DynamoDB gestionado.
+- El workflow AWS está preparado, pero no se considera evidencia hasta una ejecución aprobada con artifact y limpieza verificada.
 
 Los controles P0 se consideran completados en la implementación de referencia. Los controles P1 de recuperación, operación y seguridad disponen de IaC, automatización o documentación parcial, pero requieren aprobación, despliegue y evidencia real antes de aceptar usuarios o datos reales.
 
