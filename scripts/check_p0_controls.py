@@ -9,6 +9,8 @@ SERVICE = ROOT / "backend" / "app" / "service.py"
 CONFIG = ROOT / "backend" / "app" / "config.py"
 STACK = ROOT / "infrastructure" / "cloudops_infra" / "stack.py"
 COMPOSE = ROOT / "docker-compose.yml"
+DEPLOY = ROOT / ".github" / "workflows" / "deploy-ephemeral.yml"
+BOOTSTRAP = ROOT / "bootstrap" / "github-oidc-role.yml"
 DOC = ROOT / "docs" / "p0-production-controls.md"
 
 
@@ -18,7 +20,8 @@ def require(condition: bool, message: str) -> None:
 
 
 def main() -> None:
-    for path in (REPOSITORY, SERVICE, CONFIG, STACK, COMPOSE, DOC):
+    paths = (REPOSITORY, SERVICE, CONFIG, STACK, COMPOSE, DEPLOY, BOOTSTRAP, DOC)
+    for path in paths:
         require(path.is_file(), f"Missing required P0 control artifact: {path}")
 
     repository = REPOSITORY.read_text(encoding="utf-8")
@@ -26,6 +29,8 @@ def main() -> None:
     config = CONFIG.read_text(encoding="utf-8")
     stack = STACK.read_text(encoding="utf-8")
     compose = COMPOSE.read_text(encoding="utf-8")
+    deploy = DEPLOY.read_text(encoding="utf-8")
+    bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
     doc = DOC.read_text(encoding="utf-8")
 
     for source, content in ((REPOSITORY, repository), (SERVICE, service)):
@@ -64,6 +69,20 @@ def main() -> None:
     require("METRICS_TABLE_NAME:" in compose, "Docker Compose is missing the metrics table")
     require('allow_origins=["*"]' not in stack, "API Gateway still enables wildcard CORS")
     require('"CORS_ORIGINS": "*"' not in stack, "Lambda still receives wildcard CORS")
+
+    for token in (
+        "anonymous-events-status.txt",
+        "aws events put-events",
+        "aws dynamodb get-item",
+        "EXPECTED_INCIDENT_ID",
+    ):
+        require(token in deploy, f"Ephemeral smoke test missing P0 evidence: {token}")
+    require(
+        '-X POST "$API_URL/events"' not in deploy,
+        "Smoke test bypasses the JWT boundary with an anonymous API POST",
+    )
+    require("events:PutEvents" in bootstrap, "OIDC role cannot publish the smoke event")
+    require("dynamodb:GetItem" in bootstrap, "OIDC role cannot verify the smoke incident")
 
     doc_lower = doc.lower()
     for phrase in (
