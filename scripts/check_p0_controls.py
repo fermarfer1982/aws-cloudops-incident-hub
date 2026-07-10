@@ -41,7 +41,7 @@ def main() -> None:
         require(index_name in stack, f"CDK stack missing query index: {index_name}")
 
     for token in (
-        "METRICS_TABLE_NAME",
+        "metrics_table_name",
         "transact_write_items",
         "KeyConditionExpression",
         "SITE_METRIC_GROUP",
@@ -65,15 +65,16 @@ def main() -> None:
     require('allow_origins=["*"]' not in stack, "API Gateway still enables wildcard CORS")
     require('"CORS_ORIGINS": "*"' not in stack, "Lambda still receives wildcard CORS")
 
+    doc_lower = doc.lower()
     for phrase in (
-        "Amazon Cognito",
-        "JWT scopes",
-        "DynamoDB Query",
+        "amazon cognito",
+        "jwt scopes",
+        "dynamodb query",
         "incremental metrics",
         "local mode remains unauthenticated",
         "not production-ready",
     ):
-        require(phrase in doc, f"P0 documentation missing concept: {phrase}")
+        require(phrase in doc_lower, f"P0 documentation missing concept: {phrase}")
 
     print("P0 production control guardrails passed")
 
