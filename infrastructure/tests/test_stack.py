@@ -19,6 +19,8 @@ def test_expected_serverless_resources_are_created():
     template.resource_count_is("AWS::Events::Rule", 1)
     template.resource_count_is("AWS::SQS::Queue", 2)
     template.resource_count_is("AWS::Lambda::EventSourceMapping", 1)
+    template.resource_count_is("AWS::CloudWatch::Dashboard", 1)
+    template.resource_count_is("AWS::CloudWatch::Alarm", 4)
 
 
 def test_dynamodb_is_on_demand_and_ephemeral():
@@ -87,6 +89,36 @@ def test_eventbridge_rule_filters_incident_events():
                 "detail-type": ["InfrastructureIncidentReceived"],
             },
         },
+    )
+
+
+def test_operational_alarms_are_named_and_ignore_missing_data():
+    resources = get_template().to_json()["Resources"]
+    alarms = [
+        resource["Properties"]
+        for resource in resources.values()
+        if resource["Type"] == "AWS::CloudWatch::Alarm"
+    ]
+
+    assert {alarm["AlarmName"] for alarm in alarms} == {
+        "cloudops-api-function-errors",
+        "cloudops-processor-function-errors",
+        "cloudops-processing-queue-age",
+        "cloudops-processing-dlq-messages",
+    }
+    assert all(alarm["TreatMissingData"] == "notBreaching" for alarm in alarms)
+    assert all(not alarm.get("AlarmActions") for alarm in alarms)
+
+
+def test_dashboard_is_ephemeral_and_named():
+    template = get_template()
+    template.has_resource_properties(
+        "AWS::CloudWatch::Dashboard",
+        {"DashboardName": "cloudops-incident-hub-operations"},
+    )
+    template.has_resource(
+        "AWS::CloudWatch::Dashboard",
+        {"DeletionPolicy": "Delete", "UpdateReplacePolicy": "Delete"},
     )
 
 
