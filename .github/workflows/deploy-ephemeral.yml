@@ -9,7 +9,7 @@ on:
         required: true
         type: string
       run_smoke_test:
-        description: Run API and asynchronous processing smoke tests
+        description: Run authorization and asynchronous processing smoke tests
         required: true
         default: true
         type: boolean
@@ -95,6 +95,7 @@ jobs:
             -c region="$AWS_REGION"
           python ../scripts/check_zero_cost.py \
             "cdk.out/${STACK_NAME}.template.json"
+          python ../scripts/check_p0_controls.py
 
       - name: Deploy ephemeral stack
         working-directory: infrastructure
@@ -106,52 +107,99 @@ jobs:
             -c account="$AWS_ACCOUNT_ID" \
             -c region="$AWS_REGION"
 
-      - name: Run smoke tests
+      - name: Load deployment outputs
         if: inputs.run_smoke_test
-        env:
-          EVENT_TYPE: GITHUB_OIDC_SMOKE_TEST
         run: |
-          API_URL=$(python - <<'PY'
+          python - <<'PY' >> "$GITHUB_ENV"
           import json
           with open("evidence/cdk-outputs.json", encoding="utf-8") as handle:
-              outputs = json.load(handle)
-          print(outputs["CloudOpsIncidentHubStack"]["ApiUrl"].rstrip("/"))
+              outputs = json.load(handle)["CloudOpsIncidentHubStack"]
+          print(f"API_URL={outputs['ApiUrl'].rstrip('/')}")
+          print(f"TABLE_NAME={outputs['TableName']}")
+          print(f"EVENT_BUS_NAME={outputs['EventBusName']}")
           PY
-          )
-          echo "API_URL=$API_URL" >> "$GITHUB_ENV"
 
+      - name: Verify public health and protected API boundary
+        if: inputs.run_smoke_test
+        run: |
           curl --fail --silent --show-error \
             --retry 12 --retry-delay 5 --retry-all-errors \
             "$API_URL/health" | tee evidence/health.json
 
-          cat > evidence/smoke-event.json <<JSON
-          {
-            "source": "github-actions-${GITHUB_RUN_ID}",
-            "site": "ephemeral-lab",
-            "type": "${EVENT_TYPE}",
-            "message": "OIDC deployment smoke test from GitHub Actions",
-            "metadata": {
-              "github_run_id": "${GITHUB_RUN_ID}",
-              "github_sha": "${GITHUB_SHA}"
-            }
+          anonymous_status=$(curl --silent --show-error \
+            --output evidence/anonymous-events.json \
+            --write-out '%{http_code}' \
+            "$API_URL/events?limit=1")
+          echo "$anonymous_status" > evidence/anonymous-events-status.txt
+          test "$anonymous_status" = "401" || test "$anonymous_status" = "403" || {
+            echo "Protected route unexpectedly returned HTTP $anonymous_status"
+            exit 1
           }
-          JSON
 
-          curl --fail --silent --show-error \
-            -X POST "$API_URL/events" \
-            -H "Content-Type: application/json" \
-            --data @evidence/smoke-event.json \
-            | tee evidence/accepted-event.json
+      - name: Exercise EventBridge to DynamoDB processing
+        if: inputs.run_smoke_test
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import json
+          import os
+          from datetime import datetime, timezone
+
+          run_id = os.environ["GITHUB_RUN_ID"]
+          event_id = f"{int(run_id):032x}"[-32:]
+          timestamp = datetime.now(timezone.utc).replace(microsecond=0)
+          incident_id = f"INC-{timestamp:%Y%m%d}-{event_id[:8].upper()}"
+          detail = {
+              "event_id": event_id,
+              "event": {
+                  "source": f"github-actions-{run_id}",
+                  "site": "ephemeral-lab",
+                  "type": "GITHUB_OIDC_SMOKE_TEST",
+                  "message": "Protected P0 deployment smoke test from GitHub Actions",
+                  "metadata": {
+                      "github_run_id": run_id,
+                      "github_sha": os.environ["GITHUB_SHA"],
+                  },
+                  "timestamp": timestamp.isoformat(),
+              },
+          }
+          entry = [{
+              "EventBusName": os.environ["EVENT_BUS_NAME"],
+              "Source": "cloudops.incident-hub",
+              "DetailType": "InfrastructureIncidentReceived",
+              "Detail": json.dumps(detail, separators=(",", ":")),
+          }]
+          with open("evidence/eventbridge-entry.json", "w", encoding="utf-8") as handle:
+              json.dump(entry, handle, indent=2)
+          print(f"EXPECTED_INCIDENT_ID={incident_id}")
+          PY
+
+          aws events put-events \
+            --entries file://evidence/eventbridge-entry.json \
+            | tee evidence/put-events-result.json
+
+          python - <<'PY'
+          import json
+          with open("evidence/put-events-result.json", encoding="utf-8") as handle:
+              result = json.load(handle)
+          raise SystemExit(0 if result.get("FailedEntryCount") == 0 else 1)
+          PY
 
           processed=false
-          for attempt in $(seq 1 18); do
-            curl --fail --silent --show-error \
-              "$API_URL/events?limit=100" > evidence/incidents.json
+          for attempt in $(seq 1 24); do
+            aws dynamodb get-item \
+              --table-name "$TABLE_NAME" \
+              --key "{\"incident_id\":{\"S\":\"$EXPECTED_INCIDENT_ID\"}}" \
+              --consistent-read > evidence/dynamodb-item.json
             if python - <<'PY'
           import json
-          with open("evidence/incidents.json", encoding="utf-8") as handle:
-              incidents = json.load(handle)
-          raise SystemExit(0 if any(item.get("type") == "GITHUB_OIDC_SMOKE_TEST" for item in incidents) else 1)
+          import os
+          with open("evidence/dynamodb-item.json", encoding="utf-8") as handle:
+              item = json.load(handle).get("Item", {})
+          valid = (
+              item.get("incident_id", {}).get("S") == os.environ["EXPECTED_INCIDENT_ID"]
+              and item.get("type", {}).get("S") == "GITHUB_OIDC_SMOKE_TEST"
+          )
+          raise SystemExit(0 if valid else 1)
           PY
             then
               processed=true
