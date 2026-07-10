@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from aws_cdk import App, Environment, Tags
 
+from cloudops_infra.reliability import apply_reliability_controls
 from cloudops_infra.stack import (
     DEFAULT_ALLOWED_ORIGINS,
     DEFAULT_CALLBACK_URLS,
@@ -25,7 +26,33 @@ def csv_context(app: App, name: str, default: tuple[str, ...]) -> tuple[str, ...
     return result
 
 
+def bool_context(app: App, name: str, default: bool = False) -> bool:
+    value = app.node.try_get_context(name)
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    raise ValueError(f"CDK context {name} must be a boolean")
+
+
+def optional_string_context(app: App, name: str) -> str | None:
+    value = app.node.try_get_context(name)
+    if value is None:
+        return None
+    result = str(value).strip()
+    return result or None
+
+
 app = App()
+persistent_environment = bool_context(app, "persistent_environment")
+alarm_notification_email = optional_string_context(app, "alarm_notification_email")
+
 stack = CloudOpsIncidentHubStack(
     app,
     "CloudOpsIncidentHubStack",
@@ -33,14 +60,25 @@ stack = CloudOpsIncidentHubStack(
         account=app.node.try_get_context("account"),
         region=app.node.try_get_context("region") or "eu-west-1",
     ),
-    description="Ephemeral serverless CloudOps portfolio project with P0 controls",
+    description=(
+        "Serverless CloudOps portfolio project with P0 controls and optional P1 reliability"
+    ),
     allowed_origins=csv_context(app, "allowed_origins", DEFAULT_ALLOWED_ORIGINS),
     oauth_callback_urls=csv_context(app, "oauth_callback_urls", DEFAULT_CALLBACK_URLS),
     oauth_logout_urls=csv_context(app, "oauth_logout_urls", DEFAULT_CALLBACK_URLS),
 )
 
+apply_reliability_controls(
+    stack,
+    persistent_environment=persistent_environment,
+    alarm_notification_email=alarm_notification_email,
+)
+
 Tags.of(stack).add("Project", "aws-cloudops-incident-hub")
-Tags.of(stack).add("Environment", "ephemeral-lab")
+Tags.of(stack).add(
+    "Environment",
+    "persistent-reference" if persistent_environment else "ephemeral-lab",
+)
 Tags.of(stack).add("ManagedBy", "aws-cdk")
 
 app.synth()
