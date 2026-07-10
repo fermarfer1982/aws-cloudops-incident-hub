@@ -27,6 +27,28 @@ class Sample:
     error: str | None = None
 
 
+class RateLimiter:
+    """Serialize request starts to enforce one global requests-per-second ceiling."""
+
+    def __init__(self, max_rps: float) -> None:
+        self._interval = 0.0 if max_rps <= 0 else 1.0 / max_rps
+        self._next_start = 0.0
+        self._lock = asyncio.Lock()
+
+    async def wait(self) -> None:
+        if self._interval == 0.0:
+            return
+
+        async with self._lock:
+            now = time.monotonic()
+            scheduled = max(now, self._next_start)
+            self._next_start = scheduled + self._interval
+            delay = scheduled - now
+
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+
 def percentile(values: list[float], percentile_value: float) -> float:
     if not values:
         return 0.0
@@ -99,8 +121,10 @@ async def measured_request(
     *,
     operation: str,
     expected_statuses: set[int],
+    rate_limiter: RateLimiter,
     **kwargs: Any,
 ) -> tuple[Sample, httpx.Response | None]:
+    await rate_limiter.wait()
     started = time.perf_counter()
     try:
         response = await client.request(method, path, **kwargs)
@@ -137,6 +161,7 @@ async def worker(
     *,
     deadline: float,
     write_percent: float,
+    rate_limiter: RateLimiter,
     samples: list[Sample],
 ) -> None:
     sequence = 0
@@ -158,6 +183,7 @@ async def worker(
                 "/events",
                 operation="POST /events",
                 expected_statuses={201, 202},
+                rate_limiter=rate_limiter,
                 json=payload,
             )
             samples.append(sample)
@@ -168,6 +194,7 @@ async def worker(
                 "/metrics",
                 operation="GET /metrics",
                 expected_statuses={200},
+                rate_limiter=rate_limiter,
             )
             samples.append(sample)
         else:
@@ -177,6 +204,7 @@ async def worker(
                 "/events",
                 operation="GET /events page 1",
                 expected_statuses={200},
+                rate_limiter=rate_limiter,
                 params={"limit": 25},
             )
             samples.append(sample)
@@ -189,6 +217,7 @@ async def worker(
                         "/events",
                         operation="GET /events page 2",
                         expected_statuses={200},
+                        rate_limiter=rate_limiter,
                         params={"limit": 25, "next_token": next_token},
                     )
                     samples.append(next_sample)
@@ -206,6 +235,7 @@ async def run(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         max_keepalive_connections=max(args.concurrency, 10),
     )
     timeout = httpx.Timeout(args.request_timeout)
+    rate_limiter = RateLimiter(args.max_rps)
 
     async with httpx.AsyncClient(
         base_url=args.base_url.rstrip("/"),
@@ -227,6 +257,7 @@ async def run(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
                     client,
                     deadline=deadline,
                     write_percent=args.write_percent,
+                    rate_limiter=rate_limiter,
                     samples=samples,
                 )
                 for worker_id in range(args.concurrency)
@@ -254,6 +285,7 @@ async def run(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
             "duration_seconds": args.duration,
             "actual_elapsed_seconds": round(elapsed, 3),
             "concurrency": args.concurrency,
+            "max_requests_per_second": args.max_rps,
             "write_percent": args.write_percent,
             "request_timeout_seconds": args.request_timeout,
             "thresholds": {
@@ -281,6 +313,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--duration", type=int, default=30)
     parser.add_argument("--concurrency", type=int, default=10)
+    parser.add_argument(
+        "--max-rps",
+        type=float,
+        default=float(os.getenv("LOAD_TEST_MAX_RPS", "0")),
+        help="Global request-start ceiling. Zero keeps the local harness unbounded.",
+    )
     parser.add_argument("--write-percent", type=float, default=0.0)
     parser.add_argument("--request-timeout", type=float, default=10.0)
     parser.add_argument("--max-error-rate", type=float, default=1.0)
@@ -300,6 +338,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--duration must be at least 1 second")
     if args.concurrency < 1 or args.concurrency > 500:
         parser.error("--concurrency must be between 1 and 500")
+    if args.max_rps < 0:
+        parser.error("--max-rps must be zero or greater")
     if args.write_percent < 0 or args.write_percent > 50:
         parser.error("--write-percent must be between 0 and 50")
     if args.request_timeout <= 0:
@@ -327,8 +367,10 @@ def main() -> int:
     print(f"Requests: {summary['requests']}")
     print(f"Throughput: {summary['requests_per_second']} req/s")
     print(f"Errors: {summary['error_rate_percent']}%")
-    print(f"Latency p50/p95/p99: {summary['latency_ms']['p50']}/"
-          f"{summary['latency_ms']['p95']}/{summary['latency_ms']['p99']} ms")
+    print(
+        f"Latency p50/p95/p99: {summary['latency_ms']['p50']}/"
+        f"{summary['latency_ms']['p95']}/{summary['latency_ms']['p99']} ms"
+    )
     print(f"Report: {output}")
     if not passed:
         for failure in report["threshold_failures"]:

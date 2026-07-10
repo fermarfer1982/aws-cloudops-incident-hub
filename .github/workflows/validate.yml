@@ -39,6 +39,9 @@ jobs:
       - name: Validate load-test CLI
         run: python scripts/run_load_test.py --help
 
+      - name: Validate AWS metric collector CLI
+        run: python scripts/collect_aws_performance_evidence.py --help
+
       - name: Test pagination contract
         env:
           PYTHONPATH: backend:.
@@ -96,3 +99,6 @@ jobs:
 
       - name: Enforce pagination and load-testing controls
         run: python scripts/check_pagination_load_testing.py
+
+      - name: Enforce controlled AWS performance workflow
+        run: python scripts/check_aws_performance_workflow.py

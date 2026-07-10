@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from aws_cdk import App, Environment, Tags
 
+from cloudops_infra.aws_performance import apply_aws_performance_controls
 from cloudops_infra.performance import expose_pagination_header
 from cloudops_infra.reliability import apply_reliability_controls
 from cloudops_infra.security import (
@@ -73,6 +74,7 @@ def positive_int_context(app: App, name: str, default: int) -> int:
 
 app = App()
 persistent_environment = bool_context(app, "persistent_environment")
+enable_load_test_client = bool_context(app, "enable_load_test_client")
 alarm_notification_email = optional_string_context(app, "alarm_notification_email")
 api_throttling_rate_limit = positive_float_context(
     app,
@@ -110,6 +112,10 @@ apply_reliability_controls(
     stack,
     persistent_environment=persistent_environment,
     alarm_notification_email=alarm_notification_email,
+)
+apply_aws_performance_controls(
+    stack,
+    enable_load_test_client=enable_load_test_client,
 )
 
 Tags.of(stack).add("Project", "aws-cloudops-incident-hub")

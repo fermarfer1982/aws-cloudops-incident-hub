@@ -1,0 +1,379 @@
+name: Run controlled ephemeral AWS performance test
+run-name: AWS performance lab by ${{ github.actor }} (#${{ github.run_number }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type RUN-EPHEMERAL-AWS-PERFORMANCE-TEST to continue
+        required: true
+        type: string
+      duration_seconds:
+        description: Bounded test duration
+        required: true
+        default: "30"
+        type: choice
+        options:
+          - "15"
+          - "30"
+          - "60"
+      concurrency:
+        description: Concurrent workers
+        required: true
+        default: "2"
+        type: choice
+        options:
+          - "1"
+          - "2"
+          - "5"
+      max_rps:
+        description: Global request-start ceiling, below the default 10 req/s API limit
+        required: true
+        default: "5"
+        type: choice
+        options:
+          - "1"
+          - "2"
+          - "5"
+          - "8"
+      write_percent:
+        description: Synthetic POST percentage
+        required: true
+        default: "1"
+        type: choice
+        options:
+          - "0"
+          - "1"
+          - "5"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: aws-ephemeral-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  deploy-measure-destroy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: aws-ephemeral
+    timeout-minutes: 35
+    env:
+      STACK_NAME: CloudOpsIncidentHubStack
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      CDK_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+      CDK_DEFAULT_ACCOUNT: ${{ vars.AWS_ACCOUNT_ID }}
+      DURATION_SECONDS: ${{ inputs.duration_seconds }}
+      CONCURRENCY: ${{ inputs.concurrency }}
+      MAX_RPS: ${{ inputs.max_rps }}
+      WRITE_PERCENT: ${{ inputs.write_percent }}
+
+    steps:
+      - name: Validate explicit confirmation and governance gates
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          AWS_LOAD_TEST_APPROVED: ${{ vars.AWS_LOAD_TEST_APPROVED }}
+          AWS_COST_CONTROLS_CONFIRMED: ${{ vars.AWS_COST_CONTROLS_CONFIRMED }}
+        run: |
+          test "$CONFIRMATION" = "RUN-EPHEMERAL-AWS-PERFORMANCE-TEST" || {
+            echo "Confirmation text is incorrect"
+            exit 1
+          }
+          test "$AWS_LOAD_TEST_APPROVED" = "true" || {
+            echo "AWS_LOAD_TEST_APPROVED must be true in the aws-ephemeral environment"
+            exit 1
+          }
+          test "$AWS_COST_CONTROLS_CONFIRMED" = "true" || {
+            echo "AWS_COST_CONTROLS_CONFIRMED must be true before any AWS load test"
+            exit 1
+          }
+          test -n "$AWS_REGION"
+          test -n "$AWS_ACCOUNT_ID"
+          test -n "$AWS_DEPLOY_ROLE_ARN"
+          case "$DURATION_SECONDS" in 15|30|60) ;; *) exit 1 ;; esac
+          case "$CONCURRENCY" in 1|2|5) ;; *) exit 1 ;; esac
+          case "$MAX_RPS" in 1|2|5|8) ;; *) exit 1 ;; esac
+          case "$WRITE_PERCENT" in 0|1|5) ;; *) exit 1 ;; esac
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install deployment and measurement dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements-dev.txt
+          pip install -r infrastructure/requirements.txt
+          npm install --global aws-cdk@2
+
+      - name: Configure temporary AWS credentials through OIDC
+        id: aws_credentials
+        uses: aws-actions/configure-aws-credentials@v6.1.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: GitHubPerformance-${{ github.run_id }}
+          role-duration-seconds: 2100
+          mask-aws-account-id: true
+          unset-current-credentials: true
+
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Validate and synthesize the performance profile
+        working-directory: infrastructure
+        run: |
+          python -m pytest -q tests
+          cdk synth "$STACK_NAME" --quiet \
+            -c account="$AWS_ACCOUNT_ID" \
+            -c region="$AWS_REGION" \
+            -c enable_load_test_client=true
+          python ../scripts/check_zero_cost.py \
+            "cdk.out/${STACK_NAME}.template.json"
+          python ../scripts/check_p0_controls.py
+          python ../scripts/check_p1_controls.py
+          python ../scripts/check_security_supply_chain.py
+          python ../scripts/check_pagination_load_testing.py
+          python ../scripts/check_aws_performance_workflow.py
+
+      - name: Deploy bounded ephemeral performance stack
+        id: deploy
+        working-directory: infrastructure
+        run: |
+          mkdir -p ../evidence
+          cdk deploy "$STACK_NAME" \
+            --require-approval never \
+            --outputs-file ../evidence/cdk-outputs.json \
+            -c account="$AWS_ACCOUNT_ID" \
+            -c region="$AWS_REGION" \
+            -c enable_load_test_client=true
+
+      - name: Load deployment outputs
+        if: steps.deploy.outcome == 'success'
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import json
+          with open("evidence/cdk-outputs.json", encoding="utf-8") as handle:
+              outputs = json.load(handle)["CloudOpsIncidentHubStack"]
+          names = (
+              "ApiUrl",
+              "ApiId",
+              "ApiFunctionName",
+              "ProcessorFunctionName",
+              "TableName",
+              "MetricsTableName",
+              "ProcessingQueueName",
+              "ProcessingDlqName",
+              "UserPoolId",
+              "LoadTestClientId",
+              "LoadTestTokenUrl",
+              "ApiThrottlingRateLimit",
+              "ApiThrottlingBurstLimit",
+          )
+          for name in names:
+              value = str(outputs[name]).rstrip("/") if name == "ApiUrl" else outputs[name]
+              print(f"{name.upper()}={value}")
+          PY
+
+      - name: Obtain short-lived machine token
+        if: steps.deploy.outcome == 'success'
+        run: |
+          CLIENT_SECRET=$(aws cognito-idp describe-user-pool-client \
+            --user-pool-id "$USERPOOLID" \
+            --client-id "$LOADTESTCLIENTID" \
+            --query 'UserPoolClient.ClientSecret' \
+            --output text)
+          test -n "$CLIENT_SECRET"
+          echo "::add-mask::$CLIENT_SECRET"
+
+          SCOPES="cloudops-incident-hub/incidents.read cloudops-incident-hub/incidents.write"
+          curl --fail --silent --show-error \
+            --user "$LOADTESTCLIENTID:$CLIENT_SECRET" \
+            --header "Content-Type: application/x-www-form-urlencoded" \
+            --data-urlencode "grant_type=client_credentials" \
+            --data-urlencode "scope=$SCOPES" \
+            "$LOADTESTTOKENURL" > /tmp/cloudops-token.json
+
+          LOAD_TEST_BEARER_TOKEN=$(python - <<'PY'
+          import json
+          with open("/tmp/cloudops-token.json", encoding="utf-8") as handle:
+              response = json.load(handle)
+          print(response["access_token"])
+          PY
+          )
+          test -n "$LOAD_TEST_BEARER_TOKEN"
+          echo "::add-mask::$LOAD_TEST_BEARER_TOKEN"
+          echo "LOAD_TEST_BEARER_TOKEN=$LOAD_TEST_BEARER_TOKEN" >> "$GITHUB_ENV"
+
+          python - <<'PY'
+          import json
+          with open("/tmp/cloudops-token.json", encoding="utf-8") as handle:
+              response = json.load(handle)
+          sanitized = {
+              key: value
+              for key, value in response.items()
+              if key != "access_token"
+          }
+          with open("evidence/token-metadata.json", "w", encoding="utf-8") as handle:
+              json.dump(sanitized, handle, indent=2, sort_keys=True)
+          PY
+          rm -f /tmp/cloudops-token.json
+
+      - name: Verify authenticated API access and rate ceiling
+        if: steps.deploy.outcome == 'success'
+        run: |
+          python - <<'PY'
+          import os
+          rate = float(os.environ["APITHROTTLINGRATELIMIT"])
+          requested = float(os.environ["MAX_RPS"])
+          if requested >= rate:
+              raise SystemExit(
+                  f"MAX_RPS {requested} must stay below API throttling rate {rate}"
+              )
+          PY
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer $LOAD_TEST_BEARER_TOKEN" \
+            "$APIURL/events?limit=1" > evidence/authenticated-read.json
+
+      - name: Run bounded AWS load test
+        id: load_test
+        if: steps.deploy.outcome == 'success'
+        continue-on-error: true
+        run: |
+          TEST_START_UTC=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "TEST_START_UTC=$TEST_START_UTC" >> "$GITHUB_ENV"
+          set +e
+          python scripts/run_load_test.py \
+            --base-url "$APIURL" \
+            --duration "$DURATION_SECONDS" \
+            --concurrency "$CONCURRENCY" \
+            --max-rps "$MAX_RPS" \
+            --write-percent "$WRITE_PERCENT" \
+            --max-error-rate 1 \
+            --max-p95-ms 2000 \
+            --output evidence/aws-load-test-report.json
+          status=$?
+          set -e
+          TEST_END_UTC=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "TEST_END_UTC=$TEST_END_UTC" >> "$GITHUB_ENV"
+          exit "$status"
+
+      - name: Capture protected API state after the run
+        if: always() && steps.deploy.outcome == 'success'
+        run: |
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer $LOAD_TEST_BEARER_TOKEN" \
+            "$APIURL/metrics" > evidence/application-metrics.json
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer $LOAD_TEST_BEARER_TOKEN" \
+            "$APIURL/events?limit=25" > evidence/incidents-page.json
+
+      - name: Collect native AWS service metrics
+        if: always() && steps.deploy.outcome == 'success' && steps.load_test.outcome != 'skipped'
+        continue-on-error: true
+        run: |
+          test -n "$TEST_START_UTC"
+          test -n "$TEST_END_UTC"
+          sleep 120
+          python scripts/collect_aws_performance_evidence.py \
+            --region "$AWS_REGION" \
+            --start-time "$TEST_START_UTC" \
+            --end-time "$TEST_END_UTC" \
+            --api-id "$APIID" \
+            --api-function-name "$APIFUNCTIONNAME" \
+            --processor-function-name "$PROCESSORFUNCTIONNAME" \
+            --processing-queue-name "$PROCESSINGQUEUENAME" \
+            --processing-dlq-name "$PROCESSINGDLQNAME" \
+            --table-name "$TABLENAME" \
+            --metrics-table-name "$METRICSTABLENAME" \
+            --output evidence/aws-service-metrics.json
+
+      - name: Record execution metadata
+        if: always() && steps.aws_credentials.outcome == 'success'
+        run: |
+          mkdir -p evidence
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          metadata = {
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "workflow": os.environ["GITHUB_WORKFLOW"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "commit": os.environ["GITHUB_SHA"],
+              "region": os.environ["AWS_REGION"],
+              "stack": os.environ["STACK_NAME"],
+              "captured_at": datetime.now(timezone.utc).isoformat(),
+              "test_configuration": {
+                  "duration_seconds": int(os.environ["DURATION_SECONDS"]),
+                  "concurrency": int(os.environ["CONCURRENCY"]),
+                  "max_rps": float(os.environ["MAX_RPS"]),
+                  "write_percent": float(os.environ["WRITE_PERCENT"]),
+              },
+              "cost_note": (
+                  "Final AWS billing data is not available in real time; "
+                  "review Cost Explorer after metric ingestion."
+              ),
+          }
+          with open("evidence/execution-metadata.json", "w", encoding="utf-8") as handle:
+              json.dump(metadata, handle, indent=2, sort_keys=True)
+          PY
+
+      - name: Destroy ephemeral stack
+        id: destroy
+        if: always() && steps.aws_credentials.outcome == 'success'
+        working-directory: infrastructure
+        run: |
+          cdk destroy "$STACK_NAME" --force \
+            -c account="$AWS_ACCOUNT_ID" \
+            -c region="$AWS_REGION" \
+            -c enable_load_test_client=true
+
+      - name: Verify stack removal
+        id: verify_cleanup
+        if: always() && steps.aws_credentials.outcome == 'success'
+        run: |
+          if aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo "Stack still exists after the cleanup step"
+            exit 1
+          fi
+          echo "Stack removal verified" | tee evidence/cleanup-status.txt
+
+      - name: Upload temporary AWS performance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aws-performance-evidence-${{ github.run_id }}
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Enforce test and cleanup outcomes
+        if: always()
+        run: |
+          test "${{ steps.load_test.outcome }}" = "success" || {
+            echo "The bounded load test did not pass"
+            exit 1
+          }
+          test "${{ steps.destroy.outcome }}" = "success" || {
+            echo "The stack destroy step did not pass"
+            exit 1
+          }
+          test "${{ steps.verify_cleanup.outcome }}" = "success" || {
+            echo "Stack removal was not verified"
+            exit 1
+          }

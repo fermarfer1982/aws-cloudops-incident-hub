@@ -10,3 +10,4 @@
 - [ADR-008: Controles de fiabilidad persistente opcionales](008-optional-persistent-reliability-controls.md)
 - [ADR-009: Seguridad operacional y supply chain](009-operational-security-supply-chain.md)
 - [ADR-010: Paginación por cursor y pruebas de carga](010-cursor-pagination-and-load-testing.md)
+- [ADR-011: Prueba de rendimiento AWS efímera y controlada](011-controlled-ephemeral-aws-performance-test.md)
