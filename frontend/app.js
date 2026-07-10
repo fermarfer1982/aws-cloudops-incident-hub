@@ -35,6 +35,28 @@ function setConnection(text, cssClass) {
   els.connection.className = `connection ${cssClass}`;
 }
 
+async function loadApiIncidents() {
+  const incidents = [];
+  let nextToken = null;
+  let pageCount = 0;
+
+  do {
+    const url = new URL(`${state.apiBase}/events`);
+    url.searchParams.set("limit", "100");
+    if (nextToken) url.searchParams.set("next_token", nextToken);
+
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const page = await response.json();
+    incidents.push(...page);
+    nextToken = response.headers.get("x-next-token");
+    pageCount += 1;
+  } while (nextToken && incidents.length < 1000 && pageCount < 20);
+
+  return incidents;
+}
+
 async function loadData() {
   try {
     if (state.mode === "demo") {
@@ -42,9 +64,7 @@ async function loadData() {
       state.incidents = await response.json();
       setConnection("Demo activa", "demo");
     } else {
-      const response = await fetch(`${state.apiBase}/events?limit=500`);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      state.incidents = await response.json();
+      state.incidents = await loadApiIncidents();
       setConnection("API local conectada", "live");
     }
     renderAll();
