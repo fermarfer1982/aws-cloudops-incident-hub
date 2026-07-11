@@ -238,7 +238,7 @@ def test_no_known_high_cost_resources_exist():
     assert found == set()
 
 
-def test_lambda_policies_allow_query_and_transactions_but_not_scan():
+def test_lambda_policies_allow_required_dynamodb_actions_but_not_scan():
     resources = get_template().to_json()["Resources"]
     statements = []
     for resource in resources.values():
@@ -254,6 +254,9 @@ def test_lambda_policies_allow_query_and_transactions_but_not_scan():
         else:
             actions.update(action)
 
+    assert "dynamodb:GetItem" in actions
+    assert "dynamodb:PutItem" in actions
     assert "dynamodb:Query" in actions
-    assert "dynamodb:TransactWriteItems" in actions
+    assert "dynamodb:UpdateItem" in actions
+    assert "dynamodb:TransactWriteItems" not in actions
     assert "dynamodb:Scan" not in actions

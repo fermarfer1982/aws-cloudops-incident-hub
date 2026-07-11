@@ -199,8 +199,16 @@ jobs:
             if python - <<'PY'
           import json
           import os
-          with open("evidence/dynamodb-item.json", encoding="utf-8") as handle:
-              item = json.load(handle).get("Item", {})
+          from pathlib import Path
+
+          raw = Path("evidence/dynamodb-item.json").read_text(
+              encoding="utf-8"
+          ).strip()
+
+          if not raw:
+              raise SystemExit(1)
+
+          item = json.loads(raw).get("Item", {})
           valid = (
               item.get("incident_id", {}).get("S") == os.environ["EXPECTED_INCIDENT_ID"]
               and item.get("type", {}).get("S") == "GITHUB_OIDC_SMOKE_TEST"
