@@ -140,6 +140,7 @@ jobs:
             -c account="$AWS_ACCOUNT_ID" \
             -c region="$AWS_REGION" \
             -c enable_load_test_client=true
+          python ../scripts/check_lambda_bundle_architecture.py cdk.out
           python ../scripts/check_zero_cost.py \
             "cdk.out/${STACK_NAME}.template.json"
           python ../scripts/check_p0_controls.py

@@ -30,6 +30,27 @@ READ_SCOPE = f"{RESOURCE_SERVER_IDENTIFIER}/incidents.read"
 WRITE_SCOPE = f"{RESOURCE_SERVER_IDENTIFIER}/incidents.write"
 MANAGE_SCOPE = f"{RESOURCE_SERVER_IDENTIFIER}/incidents.manage"
 
+LAMBDA_PIP_PLATFORM = "manylinux2014_aarch64"
+LAMBDA_PYTHON_VERSION = "3.13"
+
+
+def lambda_bundle_command() -> list[str]:
+    install_command = (
+        "python -m pip install -r requirements.txt "
+        f"--platform {LAMBDA_PIP_PLATFORM} "
+        "--implementation cp "
+        f"--python-version {LAMBDA_PYTHON_VERSION} "
+        "--only-binary=:all: "
+        "--no-compile "
+        "--target /asset-output"
+    )
+    return [
+        "bash",
+        "-c",
+        f"{install_command} && cp -r app /asset-output/app",
+    ]
+
+
 DEFAULT_ALLOWED_ORIGINS = (
     "https://fermarfer1982.github.io",
     "http://localhost:8081",
@@ -256,12 +277,7 @@ class CloudOpsIncidentHubStack(Stack):
         bundling = (
             BundlingOptions(
                 image=lambda_.Runtime.PYTHON_3_13.bundling_image,
-                command=[
-                    "bash",
-                    "-c",
-                    "pip install -r requirements.txt -t /asset-output "
-                    "&& cp -r app /asset-output/app",
-                ],
+                command=lambda_bundle_command(),
             )
             if bundle_dependencies
             else None
