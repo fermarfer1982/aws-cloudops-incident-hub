@@ -292,7 +292,6 @@ class CloudOpsIncidentHubStack(Stack):
             },
             timeout=Duration.seconds(10),
             memory_size=256,
-            reserved_concurrent_executions=2,
             log_group=api_log_group,
             tracing=lambda_.Tracing.DISABLED,
         )
@@ -317,7 +316,6 @@ class CloudOpsIncidentHubStack(Stack):
             },
             timeout=Duration.seconds(15),
             memory_size=256,
-            reserved_concurrent_executions=2,
             log_group=processor_log_group,
             tracing=lambda_.Tracing.DISABLED,
         )
@@ -326,6 +324,7 @@ class CloudOpsIncidentHubStack(Stack):
                 processing_queue,
                 batch_size=10,
                 max_batching_window=Duration.seconds(5),
+                max_concurrency=2,
                 report_batch_item_failures=True,
             )
         )
