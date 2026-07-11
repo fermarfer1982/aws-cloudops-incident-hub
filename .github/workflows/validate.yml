@@ -76,6 +76,10 @@ jobs:
         working-directory: infrastructure
         run: cdk synth --quiet
 
+      - name: Validate Lambda native dependency architecture
+        run: |
+          python scripts/check_lambda_bundle_architecture.py             infrastructure/cdk.out
+
       - name: Enforce cost guardrails
         run: python scripts/check_zero_cost.py infrastructure/cdk.out/CloudOpsIncidentHubStack.template.json
 

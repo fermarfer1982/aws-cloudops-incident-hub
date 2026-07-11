@@ -1,13 +1,27 @@
 from aws_cdk import App
 from aws_cdk.assertions import Match, Template
 
-from cloudops_infra.stack import CloudOpsIncidentHubStack
+from cloudops_infra.stack import (
+    CloudOpsIncidentHubStack,
+    lambda_bundle_command,
+)
 
 
 def get_template() -> Template:
     app = App()
     stack = CloudOpsIncidentHubStack(app, "TestStack", bundle_dependencies=False)
     return Template.from_stack(stack)
+
+
+def test_lambda_bundle_targets_arm64_python313():
+    command = " ".join(lambda_bundle_command())
+
+    assert "--platform manylinux2014_aarch64" in command
+    assert "--implementation cp" in command
+    assert "--python-version 3.13" in command
+    assert "--only-binary=:all:" in command
+    assert "--no-compile" in command
+    assert "--target /asset-output" in command
 
 
 def test_expected_serverless_resources_are_created():
