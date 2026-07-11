@@ -227,6 +227,142 @@ jobs:
             exit 1
           }
 
+      - name: Collect asynchronous processor diagnostics
+        if: always() && steps.aws_credentials.outcome == 'success' && inputs.run_smoke_test
+        continue-on-error: true
+        run: |
+          set +e
+
+          mkdir -p evidence/diagnostics
+
+          aws cloudformation list-stack-resources \
+            --stack-name "$STACK_NAME" \
+            --region "$AWS_REGION" \
+            > evidence/diagnostics/stack-resources.json 2> \
+              evidence/diagnostics/stack-resources-error.txt
+
+          python - <<'PY' > evidence/diagnostics/resources.env
+          import json
+          import shlex
+          from pathlib import Path
+
+          path = Path("evidence/diagnostics/stack-resources.json")
+
+          if not path.exists() or not path.read_text(encoding="utf-8").strip():
+              print("PROCESSOR_FUNCTION_NAME=''")
+              print("PROCESSOR_LOG_GROUP_NAME=''")
+              raise SystemExit(0)
+
+          data = json.loads(path.read_text(encoding="utf-8"))
+          resources = data.get("StackResourceSummaries", [])
+
+          def physical_id(logical_prefix: str, resource_type: str) -> str:
+              for resource in resources:
+                  logical_id = resource.get("LogicalResourceId", "")
+                  if (
+                      resource.get("ResourceType") == resource_type
+                      and logical_id.startswith(logical_prefix)
+                  ):
+                      return resource.get("PhysicalResourceId", "")
+              return ""
+
+          function_name = physical_id(
+              "ProcessorFunction",
+              "AWS::Lambda::Function",
+          )
+          log_group_name = physical_id(
+              "ProcessorFunctionLogGroup",
+              "AWS::Logs::LogGroup",
+          )
+
+          print(
+              "PROCESSOR_FUNCTION_NAME="
+              + shlex.quote(function_name)
+          )
+          print(
+              "PROCESSOR_LOG_GROUP_NAME="
+              + shlex.quote(log_group_name)
+          )
+          PY
+
+          source evidence/diagnostics/resources.env
+
+          {
+            echo "PROCESSOR_FUNCTION_NAME=$PROCESSOR_FUNCTION_NAME"
+            echo "PROCESSOR_LOG_GROUP_NAME=$PROCESSOR_LOG_GROUP_NAME"
+          } > evidence/diagnostics/resolved-resources.txt
+
+          if [ -n "$PROCESSOR_FUNCTION_NAME" ]; then
+            aws lambda get-function-configuration \
+              --function-name "$PROCESSOR_FUNCTION_NAME" \
+              --region "$AWS_REGION" \
+              > evidence/diagnostics/processor-function.json 2> \
+                evidence/diagnostics/processor-function-error.txt
+
+            aws lambda list-event-source-mappings \
+              --function-name "$PROCESSOR_FUNCTION_NAME" \
+              --region "$AWS_REGION" \
+              > evidence/diagnostics/event-source-mappings.json 2> \
+                evidence/diagnostics/event-source-mappings-error.txt
+          fi
+
+          if [ -n "$PROCESSOR_LOG_GROUP_NAME" ]; then
+            START_MS=$(( ($(date +%s) - 1800) * 1000 ))
+
+            aws logs filter-log-events \
+              --log-group-name "$PROCESSOR_LOG_GROUP_NAME" \
+              --start-time "$START_MS" \
+              --region "$AWS_REGION" \
+              > evidence/diagnostics/processor-log-events.json 2> \
+                evidence/diagnostics/processor-log-events-error.txt
+          fi
+
+          PROCESSING_QUEUE_URL=$(aws sqs get-queue-url \
+            --queue-name cloudops-incident-processing \
+            --region "$AWS_REGION" \
+            --query QueueUrl \
+            --output text 2> evidence/diagnostics/queue-url-error.txt)
+
+          PROCESSING_DLQ_URL=$(aws sqs get-queue-url \
+            --queue-name cloudops-incident-processing-dlq \
+            --region "$AWS_REGION" \
+            --query QueueUrl \
+            --output text 2> evidence/diagnostics/dlq-url-error.txt)
+
+          {
+            echo "PROCESSING_QUEUE_URL=$PROCESSING_QUEUE_URL"
+            echo "PROCESSING_DLQ_URL=$PROCESSING_DLQ_URL"
+          } > evidence/diagnostics/queue-urls.txt
+
+          if [ -n "$PROCESSING_QUEUE_URL" ] \
+            && [ "$PROCESSING_QUEUE_URL" != "None" ]; then
+            aws sqs get-queue-attributes \
+              --queue-url "$PROCESSING_QUEUE_URL" \
+              --attribute-names All \
+              --region "$AWS_REGION" \
+              > evidence/diagnostics/processing-queue-attributes.json 2> \
+                evidence/diagnostics/processing-queue-error.txt
+          fi
+
+          if [ -n "$PROCESSING_DLQ_URL" ] \
+            && [ "$PROCESSING_DLQ_URL" != "None" ]; then
+            aws sqs get-queue-attributes \
+              --queue-url "$PROCESSING_DLQ_URL" \
+              --attribute-names All \
+              --region "$AWS_REGION" \
+              > evidence/diagnostics/dlq-attributes.json 2> \
+                evidence/diagnostics/dlq-attributes-error.txt
+
+            aws sqs receive-message \
+              --queue-url "$PROCESSING_DLQ_URL" \
+              --max-number-of-messages 10 \
+              --visibility-timeout 0 \
+              --wait-time-seconds 0 \
+              --region "$AWS_REGION" \
+              > evidence/diagnostics/dlq-messages.json 2> \
+                evidence/diagnostics/dlq-messages-error.txt
+          fi
+
       - name: Record deployment metadata
         if: always() && steps.aws_credentials.outcome == 'success'
         run: |
