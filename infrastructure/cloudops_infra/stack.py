@@ -338,9 +338,9 @@ class CloudOpsIncidentHubStack(Stack):
             iam.PolicyStatement(
                 actions=[
                     "dynamodb:GetItem",
+                    "dynamodb:PutItem",
                     "dynamodb:Query",
                     "dynamodb:UpdateItem",
-                    "dynamodb:TransactWriteItems",
                 ],
                 resources=repository_resources,
             )
@@ -349,8 +349,8 @@ class CloudOpsIncidentHubStack(Stack):
             iam.PolicyStatement(
                 actions=[
                     "dynamodb:GetItem",
+                    "dynamodb:PutItem",
                     "dynamodb:UpdateItem",
-                    "dynamodb:TransactWriteItems",
                 ],
                 resources=[table.table_arn, metrics_table.table_arn],
             )
