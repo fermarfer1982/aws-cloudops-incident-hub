@@ -14,6 +14,7 @@ LOAD_TEST = ROOT / "scripts" / "run_load_test.py"
 GUIDE = ROOT / "docs" / "pagination-load-testing.md"
 BASELINE = ROOT / "docs" / "performance-baseline.md"
 LOCAL_EVIDENCE = ROOT / "docs" / "performance-baseline-local-2026-07-10.md"
+AWS_EVIDENCE = ROOT / "docs" / "performance-baseline-aws-2026-07-12.md"
 ADR = ROOT / "docs" / "adr" / "010-cursor-pagination-and-load-testing.md"
 WORKFLOW = ROOT / ".github" / "workflows" / "validate.yml"
 
@@ -41,6 +42,7 @@ def main() -> None:
         GUIDE,
         BASELINE,
         LOCAL_EVIDENCE,
+        AWS_EVIDENCE,
         ADR,
         WORKFLOW,
     )
@@ -141,7 +143,21 @@ def main() -> None:
             "365",
             "Duplicate IDs | 0",
             "does not measure",
-            "WA-017 is complete only for the local laboratory",
+            "validated AWS baseline",
+            "WA-017 is closed",
+        ),
+    )
+    require_tokens(
+        AWS_EVIDENCE,
+        (
+            "Measured and validated for one controlled ephemeral AWS laboratory run",
+            "29185526945",
+            "Requests | 152",
+            "5.01 req/s",
+            "0.0%",
+            "Was stack removal verified?",
+            "WA-017",
+            "WA-018",
         ),
     )
     require_tokens(
