@@ -2,7 +2,26 @@
 
 The workload stack deliberately does not create AWS Budgets or Cost Anomaly Detection resources. Those controls belong at the account or organization level and must exist before a persistent deployment is approved.
 
-## Required controls before deployment
+## Current laboratory evidence
+
+Read-only evidence collected on 2026-07-12 confirms that the laboratory account
+contains:
+
+- `cloudops-lab-monthly`, a monthly 5 USD cost budget.
+- `cloudops-zero-spend`, a monthly 1 USD early-warning budget with an actual-spend
+  alert above 0.01 USD.
+- Actual and forecasted budget notifications with EMAIL subscribers.
+- `Default-Services-Monitor`, a service-dimensional anomaly monitor.
+- Two daily anomaly subscriptions with confirmed EMAIL subscribers.
+- `cloudops-daily-anomalies`, with an absolute-impact threshold of 1 USD.
+
+Evidence:
+`docs/aws-cost-governance-evidence-2026-07-12.md`.
+
+The observed thresholds differ from the suggested production structure below.
+They are documented exactly rather than treated as equivalent.
+
+## Target controls before a persistent production deployment
 
 - Monthly AWS cost budget for the target account.
 - Actual-spend notifications at 50%, 80% and 100% of the approved amount.

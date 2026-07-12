@@ -12,6 +12,8 @@ OBJECTIVES = ROOT / "docs" / "recovery-objectives.md"
 RESTORE = ROOT / "docs" / "runbook-dynamodb-restore.md"
 SLOS = ROOT / "docs" / "service-level-objectives.md"
 COSTS = ROOT / "docs" / "cost-controls.md"
+COST_EVIDENCE = ROOT / "docs" / "aws-cost-governance-evidence-2026-07-12.md"
+COST_EVIDENCE_JSON = ROOT / "docs" / "evidence" / "aws-cost-governance-2026-07-12.json"
 ADR = ROOT / "docs" / "adr" / "008-optional-persistent-reliability-controls.md"
 WORKFLOW = ROOT / ".github" / "workflows" / "validate.yml"
 
@@ -31,6 +33,8 @@ def main() -> None:
         RESTORE,
         SLOS,
         COSTS,
+        COST_EVIDENCE,
+        COST_EVIDENCE_JSON,
         ADR,
         WORKFLOW,
     )
@@ -45,6 +49,8 @@ def main() -> None:
     restore = RESTORE.read_text(encoding="utf-8")
     slos = SLOS.read_text(encoding="utf-8")
     costs = COSTS.read_text(encoding="utf-8")
+    cost_evidence = COST_EVIDENCE.read_text(encoding="utf-8")
+    cost_evidence_json = COST_EVIDENCE_JSON.read_text(encoding="utf-8")
     adr = ADR.read_text(encoding="utf-8")
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
@@ -121,6 +127,42 @@ def main() -> None:
         "account or organization level",
     ):
         require(phrase in costs, f"Cost controls document missing concept: {phrase}")
+
+    for phrase in (
+        "Validated for the AWS laboratory account",
+        "cloudops-lab-monthly",
+        "cloudops-zero-spend",
+        "cloudops-daily-anomalies",
+        "WA-011",
+        "COST-01",
+        "not production-ready",
+    ):
+        require(
+            phrase in cost_evidence,
+            f"Cost-governance evidence missing concept: {phrase}",
+        )
+
+    for token in (
+        '"account_id": "<redacted>"',
+        '"contains_email_addresses": false',
+        '"cloudops-lab-monthly"',
+        '"cloudops-zero-spend"',
+        '"cloudops-daily-anomalies"',
+        '"status": "CONFIRMED"',
+    ):
+        require(
+            token in cost_evidence_json,
+            f"Sanitized cost-governance JSON missing token: {token}",
+        )
+
+    require(
+        "651980295756" not in cost_evidence_json,
+        "AWS account identifier must not be committed in cost evidence",
+    )
+    require(
+        "@" not in cost_evidence_json,
+        "Email addresses must not be committed in cost evidence",
+    )
 
     require("ephemeral profile as the default" in adr, "ADR must preserve ephemeral default")
     require(

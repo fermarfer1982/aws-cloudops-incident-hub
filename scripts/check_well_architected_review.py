@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REVIEW_PATH = ROOT / "docs" / "well-architected-review.md"
 BACKLOG_PATH = ROOT / "docs" / "well-architected-backlog.md"
 OWNERSHIP_PATH = ROOT / "docs" / "workload-ownership.md"
+COST_EVIDENCE_PATH = ROOT / "docs" / "aws-cost-governance-evidence-2026-07-12.md"
 ADR_PATH = ROOT / "docs" / "adr" / "005-well-architected-self-assessment.md"
 
 PILLAR_HEADINGS = (
@@ -43,6 +44,7 @@ def main() -> None:
         REVIEW_PATH,
         BACKLOG_PATH,
         OWNERSHIP_PATH,
+        COST_EVIDENCE_PATH,
         ADR_PATH,
     ):
         require(path.is_file(), f"Missing required Well-Architected artifact: {path}")
@@ -50,6 +52,7 @@ def main() -> None:
     review = REVIEW_PATH.read_text(encoding="utf-8")
     backlog = BACKLOG_PATH.read_text(encoding="utf-8")
     ownership = OWNERSHIP_PATH.read_text(encoding="utf-8")
+    cost_evidence = COST_EVIDENCE_PATH.read_text(encoding="utf-8")
     adr = ADR_PATH.read_text(encoding="utf-8")
 
     for heading in PILLAR_HEADINGS:
@@ -103,6 +106,28 @@ def main() -> None:
     require(
         "Completado para repositorio y laboratorio" in backlog,
         "WA-010 laboratory completion must be recorded in the backlog",
+    )
+
+    for phrase in (
+        "Validated for the AWS laboratory account",
+        "cloudops-lab-monthly",
+        "cloudops-zero-spend",
+        "Cost Anomaly Detection",
+        "WA-011",
+        "COST-01",
+    ):
+        require(
+            phrase in cost_evidence,
+            f"Missing required cost-governance evidence concept: {phrase}",
+        )
+
+    require(
+        "docs/aws-cost-governance-evidence-2026-07-12.md" in review,
+        "Well-Architected review must reference cost-governance evidence",
+    )
+    require(
+        "Completado para laboratorio: dos budgets" in backlog,
+        "WA-011 laboratory completion must be recorded in the backlog",
     )
 
     backlog_ids = re.findall(r"^\| (WA-\d{3}) \|", backlog, flags=re.MULTILINE)

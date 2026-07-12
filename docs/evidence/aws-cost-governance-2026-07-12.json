@@ -1,0 +1,153 @@
+{
+  "anomaly_monitors": [
+    {
+      "creation_date": "2026-07-10T14:45:13.966359820Z",
+      "dimension": "SERVICE",
+      "dimensional_value_count": 0,
+      "last_evaluated_date": null,
+      "last_updated_date": "2026-07-10T14:45:13.966Z",
+      "name": "Default-Services-Monitor",
+      "type": "DIMENSIONAL"
+    }
+  ],
+  "anomaly_subscriptions": [
+    {
+      "frequency": "DAILY",
+      "monitor_count": 1,
+      "name": "Default-Services-Subscription",
+      "subscribers": [
+        {
+          "status": "CONFIRMED",
+          "type": "EMAIL"
+        }
+      ],
+      "threshold": null,
+      "threshold_expression": {
+        "absolute_impact_usd_greater_than_or_equal": 100.0,
+        "percentage_impact_greater_than_or_equal": 40.0
+      }
+    },
+    {
+      "frequency": "DAILY",
+      "monitor_count": 1,
+      "name": "cloudops-daily-anomalies",
+      "subscribers": [
+        {
+          "status": "CONFIRMED",
+          "type": "EMAIL"
+        }
+      ],
+      "threshold": 1.0,
+      "threshold_expression": {
+        "absolute_impact_usd_greater_than_or_equal": 1.0
+      }
+    }
+  ],
+  "budgets": [
+    {
+      "actual_spend": {
+        "amount": "0.001",
+        "unit": "USD"
+      },
+      "forecasted_spend": null,
+      "limit": {
+        "amount": "5.0",
+        "unit": "USD"
+      },
+      "name": "cloudops-lab-monthly",
+      "notifications": [
+        {
+          "comparison_operator": "GREATER_THAN",
+          "notification_type": "ACTUAL",
+          "state": "OK",
+          "subscriber_count": 1,
+          "subscriber_types": {
+            "EMAIL": 1
+          },
+          "threshold": 85.0,
+          "threshold_type": null
+        },
+        {
+          "comparison_operator": "GREATER_THAN",
+          "notification_type": "ACTUAL",
+          "state": "OK",
+          "subscriber_count": 1,
+          "subscriber_types": {
+            "EMAIL": 1
+          },
+          "threshold": 100.0,
+          "threshold_type": null
+        },
+        {
+          "comparison_operator": "GREATER_THAN",
+          "notification_type": "FORECASTED",
+          "state": "OK",
+          "subscriber_count": 1,
+          "subscriber_types": {
+            "EMAIL": 1
+          },
+          "threshold": 100.0,
+          "threshold_type": null
+        }
+      ],
+      "time_unit": "MONTHLY",
+      "type": "COST"
+    },
+    {
+      "actual_spend": {
+        "amount": "0.001",
+        "unit": "USD"
+      },
+      "forecasted_spend": null,
+      "limit": {
+        "amount": "1.0",
+        "unit": "USD"
+      },
+      "name": "cloudops-zero-spend",
+      "notifications": [
+        {
+          "comparison_operator": "GREATER_THAN",
+          "notification_type": "ACTUAL",
+          "state": "OK",
+          "subscriber_count": 1,
+          "subscriber_types": {
+            "EMAIL": 1
+          },
+          "threshold": 0.01,
+          "threshold_type": "ABSOLUTE_VALUE"
+        },
+        {
+          "comparison_operator": "GREATER_THAN",
+          "notification_type": "ACTUAL",
+          "state": "OK",
+          "subscriber_count": 1,
+          "subscriber_types": {
+            "EMAIL": 1
+          },
+          "threshold": 100.0,
+          "threshold_type": null
+        },
+        {
+          "comparison_operator": "GREATER_THAN",
+          "notification_type": "FORECASTED",
+          "state": "OK",
+          "subscriber_count": 1,
+          "subscriber_types": {
+            "EMAIL": 1
+          },
+          "threshold": 100.0,
+          "threshold_type": null
+        }
+      ],
+      "time_unit": "MONTHLY",
+      "type": "COST"
+    }
+  ],
+  "metadata": {
+    "account_id": "<redacted>",
+    "collected_at": "2026-07-12T10:38:57Z",
+    "collection_method": "AWS CLI read-only queries from AWS CloudShell",
+    "contains_account_identifier": false,
+    "contains_email_addresses": false
+  }
+}
