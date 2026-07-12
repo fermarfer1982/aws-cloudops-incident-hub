@@ -2,7 +2,10 @@
 
 ## Status
 
-These SLOs are initial engineering objectives for a future persistent environment. They are not contractual commitments and are not considered validated until representative load and game-day evidence exists.
+These SLOs are initial engineering objectives for a future persistent environment. They are not contractual commitments and are not considered validated until representative load, game-day evidence and organizational approval exist.
+
+The repository and laboratory owner is assigned in `docs/workload-ownership.md`.
+A production service owner and business/data owner remain unassigned.
 
 ## User journeys
 
@@ -31,7 +34,7 @@ For a 99.9% monthly availability objective, the nominal error budget is approxim
 - end-to-end API Gateway metrics,
 - agreed exclusions,
 - an approved maintenance policy,
-- and an accountable service owner.
+- and an accountable production service owner.
 
 ## Alert mapping
 

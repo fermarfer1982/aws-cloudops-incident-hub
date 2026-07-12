@@ -33,7 +33,7 @@ No persistent production traffic profile, RTO, RPO, SLO, compliance regime, data
 
 | Pillar | Current rating | Main strength | Main risk |
 |---|---|---|---|
-| Operational excellence | Medium | IaC, CI, runbooks, smoke evidence and cleanup | No approved SLO, ownership or alert-routing process |
+| Operational excellence | Medium | IaC, CI, runbooks, laboratory ownership and cleanup | No approved production SLO, on-call or alert-routing process |
 | Security | Medium for production reference | Cognito JWT scopes, OIDC federation, explicit CORS and least privilege | No abuse protection, data classification or supply-chain security baseline |
 | Reliability | Medium | EventBridge, SQS, DLQ, retries, idempotency and alarms | No approved RTO/RPO, restore test or regional recovery strategy |
 | Performance efficiency | Medium | Query pagination, incremental metrics, ARM64 and validated local/AWS baselines | No sustained-capacity test or comparative tuning |
@@ -42,7 +42,7 @@ No persistent production traffic profile, RTO, RPO, SLO, compliance regime, data
 
 ### Overall conclusion
 
-WA-001 through WA-005 are closed in the reference implementation: the cloud API is authenticated and scope-authorized, CORS is explicit, operational listings use DynamoDB Query and metrics are materialized transactionally. The workload remains **not production-ready** because recovery objectives, tested restore, approved SLOs, ownership, alarm routing, complete financial evidence, abuse protection and sustained-capacity evidence are still missing.
+WA-001 through WA-005 are closed in the reference implementation: the cloud API is authenticated and scope-authorized, CORS is explicit, operational listings use DynamoDB Query and metrics are materialized transactionally. The workload remains **not production-ready** because approved production SLOs, organizational ownership and on-call coverage, tested restore, alarm routing, complete financial evidence, abuse protection and sustained-capacity evidence are still missing.
 
 ---
 
@@ -54,12 +54,14 @@ WA-001 through WA-005 are closed in the reference implementation: the cloud API 
 - GitHub Actions runs linting, tests, CDK synthesis and all guardrails.
 - Deployment uses GitHub OIDC, explicit confirmation, smoke tests and automatic destroy.
 - CloudWatch dashboards, alarms, runbooks, ADRs and temporary evidence are versioned.
+- A named laboratory workload owner, role assignments, decision rights, escalation
+  model and RACI matrix are versioned in `docs/workload-ownership.md`.
 
 ## Risks and gaps
 
 | ID | Risk | Severity | Status |
 |---|---|---|---|
-| OPS-01 | No approved service owner, escalation path or on-call responsibility | High | Open |
+| OPS-01 | No approved service owner, escalation path or on-call responsibility | High | Closed for laboratory ownership; production roles and on-call remain open |
 | OPS-02 | No SLO, error budget, availability target or latency objective | High | Open |
 | OPS-03 | Alarms have no notification or incident-management destination | Medium | Accepted for laboratory |
 | OPS-04 | No game-day or failure-injection evidence | Medium | Open |
@@ -67,11 +69,11 @@ WA-001 through WA-005 are closed in the reference implementation: the cloud API 
 
 ## Recommended actions
 
-Define workload ownership and measurable SLOs, route alarms to an approved channel, execute game days and document release/rollback criteria.
+Assign organizational production owners, approve measurable SLOs, route alarms to an approved channel, execute game days and document release/rollback criteria.
 
 ## Pillar rating
 
-**Medium risk.** Engineering automation is strong, but operational accountability and measurable outcomes remain undefined.
+**Medium risk.** Laboratory accountability is defined, but production ownership, on-call coverage, approved outcomes and alert routing remain incomplete.
 
 ---
 
@@ -274,6 +276,7 @@ Repeat this review before real users or data, after identity or recovery changes
 - `scripts/collect_aws_performance_evidence.py`
 - `docs/performance-baseline-local-2026-07-10.md`
 - `docs/performance-baseline-aws-2026-07-12.md`
+- `docs/workload-ownership.md`
 - `scripts/check_p0_controls.py`
 - `docs/p0-production-controls.md`
 - `docs/observability.md`

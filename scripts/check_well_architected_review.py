@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REVIEW_PATH = ROOT / "docs" / "well-architected-review.md"
 BACKLOG_PATH = ROOT / "docs" / "well-architected-backlog.md"
+OWNERSHIP_PATH = ROOT / "docs" / "workload-ownership.md"
 ADR_PATH = ROOT / "docs" / "adr" / "005-well-architected-self-assessment.md"
 
 PILLAR_HEADINGS = (
@@ -38,11 +39,17 @@ def require(condition: bool, message: str) -> None:
 
 
 def main() -> None:
-    for path in (REVIEW_PATH, BACKLOG_PATH, ADR_PATH):
+    for path in (
+        REVIEW_PATH,
+        BACKLOG_PATH,
+        OWNERSHIP_PATH,
+        ADR_PATH,
+    ):
         require(path.is_file(), f"Missing required Well-Architected artifact: {path}")
 
     review = REVIEW_PATH.read_text(encoding="utf-8")
     backlog = BACKLOG_PATH.read_text(encoding="utf-8")
+    ownership = OWNERSHIP_PATH.read_text(encoding="utf-8")
     adr = ADR_PATH.read_text(encoding="utf-8")
 
     for heading in PILLAR_HEADINGS:
@@ -72,6 +79,31 @@ def main() -> None:
 
     for blocker in PRODUCTION_BLOCKERS:
         require(blocker in review, f"Missing production blocker in review: {blocker}")
+
+    for phrase in (
+        "Fernando Martínez Fernández",
+        "Laboratory workload owner",
+        "RACI matrix",
+        "Decision authority",
+        "No 24x7 on-call",
+        "Production blockers",
+        "Review cadence",
+        "WA-010",
+        "OPS-01",
+    ):
+        require(
+            phrase in ownership,
+            f"Missing required workload ownership concept: {phrase}",
+        )
+
+    require(
+        "docs/workload-ownership.md" in review,
+        "Well-Architected review must reference workload ownership evidence",
+    )
+    require(
+        "Completado para repositorio y laboratorio" in backlog,
+        "WA-010 laboratory completion must be recorded in the backlog",
+    )
 
     backlog_ids = re.findall(r"^\| (WA-\d{3}) \|", backlog, flags=re.MULTILINE)
     require(len(backlog_ids) >= 25, "The remediation backlog is unexpectedly small")

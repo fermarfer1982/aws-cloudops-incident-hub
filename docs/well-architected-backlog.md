@@ -24,7 +24,7 @@ Este backlog convierte los hallazgos de `docs/well-architected-review.md` en acc
 | WA-007 | P1 | Reliability | Activar PITR para entornos persistentes | Test CDK verifica `PointInTimeRecoverySpecification` | WA-006 | Completado en referencia |
 | WA-008 | P1 | Reliability | Crear y probar restauración | Runbook y evidencia de un restore exitoso | WA-007 | Runbook completado; restore real pendiente |
 | WA-009 | P1 | Operational excellence | Definir SLO y error budget | SLO de disponibilidad, latencia y procesamiento asíncrono | Datos de carga y negocio | Baselines local y AWS registrados; objetivos y aprobación pendientes |
-| WA-010 | P1 | Operational excellence | Asignar ownership | Matriz RACI o tabla con owner técnico, seguridad, coste y operación | Organización objetivo | Pendiente |
+| WA-010 | P1 | Operational excellence | Asignar ownership | Matriz RACI o tabla con owner técnico, seguridad, coste y operación | Organización objetivo | Completado para repositorio y laboratorio; roles organizativos de producción pendientes |
 | WA-011 | P1 | Cost optimization | Configurar AWS Budget y anomalías de coste | Evidencia de presupuesto, umbrales y receptores | Cuenta AWS de laboratorio | Checklist completado; configuración de cuenta pendiente |
 | WA-012 | P1 | Security | Añadir throttling y protección frente a abuso | Límites explícitos en API Gateway; WAF evaluado si aplica | Perfil de tráfico | Throttling y baseline AWS conservador validados; decisión WAF y carga límite pendientes |
 | WA-013 | P1 | Security | Añadir análisis de dependencias y secretos | Dependabot/CodeQL/secret scanning o herramienta equivalente | Política GitHub | Automatización completada; configuración y alertas reales pendientes |
