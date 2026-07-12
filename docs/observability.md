@@ -31,7 +31,17 @@ La ventana inicial es de tres horas para facilitar una demostración breve despu
 | `cloudops-processing-queue-age` | Edad del mensaje más antiguo | >= 300 s durante 10 min | El procesamiento no mantiene el ritmo de llegada |
 | `cloudops-processing-dlq-messages` | Mensajes visibles en DLQ | >= 1 | Existe al menos un evento que requiere intervención |
 
-Todas las alarmas utilizan `notBreaching` cuando no existen datos. El laboratorio no configura acciones SNS automáticamente: una alarma cambia de estado, pero no envía notificaciones. En producción se conectaría a un tópico SNS, PagerDuty, Opsgenie u otra plataforma corporativa.
+Todas las alarmas utilizan `notBreaching` cuando no existen datos. El perfil predeterminado no configura acciones de notificación. El perfil ChatOps opcional crea un tópico SNS, conecta las transiciones `ALARM` y `OK` y entrega las notificaciones mediante Amazon Q Developer a un canal autorizado de Slack.
+
+## Perfil ChatOps opcional
+
+La integración con Slack está desactivada por defecto.
+
+Para activarla deben proporcionarse juntos `slack_workspace_id` y `slack_channel_id`. Los identificadores reales se suministran durante el despliegue y no se versionan en el repositorio.
+
+El perfil crea un tópico SNS, conecta las cuatro alarmas en estados `ALARM` y `OK`, configura Amazon Q para Slack y aplica una política IAM de mínimo privilegio. El logging de Amazon Q permanece desactivado.
+
+La infraestructura está validada mediante tests y síntesis local. La entrega real en Slack continúa pendiente de una prueba AWS controlada.
 
 ## Principios de diseño
 

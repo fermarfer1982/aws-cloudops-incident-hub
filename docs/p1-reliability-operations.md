@@ -8,7 +8,9 @@ This phase adds an optional persistent deployment profile without changing the d
 - `Retain` deletion and replacement policies for persistent DynamoDB tables.
 - Thirty-day retention and `Retain` policies for the two Lambda log groups in persistent mode.
 - Optional CloudWatch alarm delivery through a dedicated SNS topic.
-- Email subscription confirmation remains mandatory before messages are delivered.
+- Optional Amazon Q delivery to an authorized Slack channel.
+- A notification-only IAM guardrail without administrative access.
+- Email confirmation remains mandatory when email delivery is used.
 - Initial recovery objectives, service-level objectives, restore runbook, cost-control checklist and sanitized laboratory cost-governance evidence.
 - CI guardrails that verify the controls and keep ephemeral mode unchanged.
 
@@ -50,6 +52,16 @@ Behavior:
 
 A persistent deployment can generate ongoing AWS charges and is not enabled automatically.
 
+### ChatOps reference
+
+The Slack profile requires both workspace and channel identifiers.
+
+It creates one SNS topic, connects all four alarms in `ALARM` and `OK`, and configures Amazon Q with a notification-only IAM policy.
+
+Real workspace and channel identifiers are not committed.
+
+The infrastructure has been synthesized and tested locally. Real `ALARM` and `OK` delivery evidence is still pending.
+
 ## Recovery targets
 
 The initial engineering targets are:
@@ -64,7 +76,7 @@ These are engineering targets to validate through restore exercises. They are no
 
 - No real restore exercise has been executed in an AWS account.
 - No approved service owner or on-call rotation exists.
-- No confirmed notification recipient exists by default.
+- ChatOps IaC is validated, but real `ALARM` and `OK` delivery evidence is still pending.
 - AWS Budgets and Cost Anomaly Detection are active and evidenced for the laboratory account; production tagging, budget approval and post-billing review remain pending.
 - Regional recovery remains documented but untested.
 - The provisional SLOs do not yet have a representative production traffic baseline.

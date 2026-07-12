@@ -9,6 +9,8 @@ def get_template(
     *,
     persistent_environment: bool = False,
     alarm_notification_email: str | None = None,
+    slack_workspace_id: str | None = None,
+    slack_channel_id: str | None = None,
 ) -> Template:
     app = App()
     stack = CloudOpsIncidentHubStack(app, "TestStack", bundle_dependencies=False)
@@ -16,6 +18,8 @@ def get_template(
         stack,
         persistent_environment=persistent_environment,
         alarm_notification_email=alarm_notification_email,
+        slack_workspace_id=slack_workspace_id,
+        slack_channel_id=slack_channel_id,
     )
     return Template.from_stack(stack)
 
@@ -105,3 +109,152 @@ def test_invalid_alarm_email_is_rejected():
         assert "alarm_notification_email" in str(exc)
     else:
         raise AssertionError("Invalid alarm email was accepted")
+
+
+
+def test_slack_creates_notification_only_chatops_configuration():
+    template = get_template(
+        slack_workspace_id="T0123456789",
+        slack_channel_id="C0123456789",
+    )
+
+    template.resource_count_is("AWS::SNS::Topic", 1)
+    template.resource_count_is(
+        "AWS::Chatbot::SlackChannelConfiguration",
+        1,
+    )
+    template.resource_count_is("AWS::IAM::ManagedPolicy", 1)
+
+    template.has_resource_properties(
+        "AWS::Chatbot::SlackChannelConfiguration",
+        {
+            "ConfigurationName": (
+                "cloudops-incident-hub-operations"
+            ),
+            "SlackWorkspaceId": "T0123456789",
+            "SlackChannelId": "C0123456789",
+            "LoggingLevel": "NONE",
+            "UserRoleRequired": False,
+            "SnsTopicArns": Match.any_value(),
+            "GuardrailPolicies": Match.any_value(),
+        },
+    )
+
+    resources = template.to_json()["Resources"]
+
+    slack_configurations = [
+        resource["Properties"]
+        for resource in resources.values()
+        if resource["Type"]
+        == "AWS::Chatbot::SlackChannelConfiguration"
+    ]
+
+    assert len(slack_configurations) == 1
+
+    slack_properties = slack_configurations[0]
+
+    assert len(slack_properties["SnsTopicArns"]) == 1
+    assert len(slack_properties["GuardrailPolicies"]) == 1
+
+    managed_policies = [
+        resource
+        for resource in resources.values()
+        if resource["Type"] == "AWS::IAM::ManagedPolicy"
+    ]
+
+    assert len(managed_policies) == 1
+
+    policy = str(
+        managed_policies[0]["Properties"]["PolicyDocument"]
+    )
+
+    for permission in (
+        "cloudwatch:Describe*",
+        "cloudwatch:Get*",
+        "cloudwatch:List*",
+        "sns:GetTopicAttributes",
+        "sns:List*",
+    ):
+        assert permission in policy
+
+    assert "AdministratorAccess" not in str(resources)
+
+    alarms = [
+        resource["Properties"]
+        for resource in resources.values()
+        if resource["Type"] == "AWS::CloudWatch::Alarm"
+    ]
+
+    assert len(alarms) == 4
+    assert all(
+        len(alarm.get("AlarmActions", [])) == 1
+        for alarm in alarms
+    )
+    assert all(
+        len(alarm.get("OKActions", [])) == 1
+        for alarm in alarms
+    )
+
+
+def test_slack_identifiers_must_be_provided_together():
+    cases = (
+        ("T0123456789", None),
+        (None, "C0123456789"),
+    )
+
+    for workspace_id, channel_id in cases:
+        app = App()
+        stack = CloudOpsIncidentHubStack(
+            app,
+            "TestStack",
+            bundle_dependencies=False,
+        )
+
+        try:
+            apply_reliability_controls(
+                stack,
+                slack_workspace_id=workspace_id,
+                slack_channel_id=channel_id,
+            )
+        except ValueError as exc:
+            assert "must be provided together" in str(exc)
+        else:
+            raise AssertionError(
+                "Incomplete Slack identifiers were accepted"
+            )
+
+
+def test_invalid_slack_identifier_prefixes_are_rejected():
+    cases = (
+        (
+            "invalid-workspace",
+            "C0123456789",
+            "slack_workspace_id",
+        ),
+        (
+            "T0123456789",
+            "invalid-channel",
+            "slack_channel_id",
+        ),
+    )
+
+    for workspace_id, channel_id, expected_error in cases:
+        app = App()
+        stack = CloudOpsIncidentHubStack(
+            app,
+            "TestStack",
+            bundle_dependencies=False,
+        )
+
+        try:
+            apply_reliability_controls(
+                stack,
+                slack_workspace_id=workspace_id,
+                slack_channel_id=channel_id,
+            )
+        except ValueError as exc:
+            assert expected_error in str(exc)
+        else:
+            raise AssertionError(
+                "Invalid Slack identifier was accepted"
+            )
