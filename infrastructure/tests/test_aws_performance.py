@@ -7,7 +7,11 @@ from cloudops_infra.stack import CloudOpsIncidentHubStack
 
 def synthesize(*, enable_load_test_client: bool) -> dict:
     app = App()
-    stack = CloudOpsIncidentHubStack(app, "TestStack", bundle_dependencies=False)
+    stack = CloudOpsIncidentHubStack(
+        app,
+        "TestStack",
+        bundle_dependencies=False,
+    )
     apply_aws_performance_controls(
         stack,
         enable_load_test_client=enable_load_test_client,
@@ -23,8 +27,15 @@ def test_default_reference_does_not_create_machine_client():
         if resource["Type"] == "AWS::Cognito::UserPoolClient"
     ]
 
+    authorizer = next(
+        resource["Properties"]
+        for resource in resources.values()
+        if resource["Type"] == "AWS::ApiGatewayV2::Authorizer"
+    )
+
     assert len(clients) == 1
     assert all(client.get("GenerateSecret") is not True for client in clients)
+    assert len(authorizer["JwtConfiguration"]["Audience"]) == 1
 
 
 def test_ephemeral_performance_profile_creates_scoped_machine_client():
@@ -37,7 +48,8 @@ def test_ephemeral_performance_profile_creates_scoped_machine_client():
     machine_client = next(
         client
         for client in clients
-        if client.get("ClientName") == "cloudops-incident-hub-ephemeral-load-test"
+        if client.get("ClientName")
+        == "cloudops-incident-hub-ephemeral-load-test"
     )
 
     assert len(clients) == 2
@@ -49,7 +61,32 @@ def test_ephemeral_performance_profile_creates_scoped_machine_client():
         "cloudops-incident-hub/incidents.write",
     }
     assert machine_client["AccessTokenValidity"] == 15
-    assert machine_client["TokenValidityUnits"] == {"AccessToken": "minutes"}
+    assert machine_client["TokenValidityUnits"] == {
+        "AccessToken": "minutes"
+    }
+
+
+def test_machine_client_is_included_in_jwt_authorizer_audience():
+    resources = synthesize(enable_load_test_client=True)["Resources"]
+
+    machine_client_logical_id = next(
+        logical_id
+        for logical_id, resource in resources.items()
+        if resource["Type"] == "AWS::Cognito::UserPoolClient"
+        and resource["Properties"].get("ClientName")
+        == "cloudops-incident-hub-ephemeral-load-test"
+    )
+
+    authorizer = next(
+        resource["Properties"]
+        for resource in resources.values()
+        if resource["Type"] == "AWS::ApiGatewayV2::Authorizer"
+    )
+
+    audiences = authorizer["JwtConfiguration"]["Audience"]
+
+    assert len(audiences) == 2
+    assert {"Ref": machine_client_logical_id} in audiences
 
 
 def test_performance_measurement_outputs_are_exposed():

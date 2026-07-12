@@ -19,7 +19,10 @@ def apply_aws_performance_controls(
 
     api = cast(apigwv2.HttpApi, stack.node.find_child("HttpApi"))
     api_function = cast(lambda_.Function, stack.node.find_child("ApiFunction"))
-    processor_function = cast(lambda_.Function, stack.node.find_child("ProcessorFunction"))
+    processor_function = cast(
+        lambda_.Function,
+        stack.node.find_child("ProcessorFunction"),
+    )
 
     CfnOutput(stack, "ApiId", value=api.api_id)
     CfnOutput(stack, "ApiFunctionName", value=api_function.function_name)
@@ -29,6 +32,10 @@ def apply_aws_performance_controls(
         return
 
     user_pool = cast(cognito.UserPool, stack.node.find_child("UserPool"))
+    web_client = cast(
+        cognito.UserPoolClient,
+        user_pool.node.find_child("WebClient"),
+    )
     resource_server = cast(
         cognito.UserPoolResourceServer,
         user_pool.node.find_child("ApiResourceServer"),
@@ -54,7 +61,30 @@ def apply_aws_performance_controls(
         ),
     )
     client.add_dependency(
-        cast(cognito.CfnUserPoolResourceServer, resource_server.node.default_child)
+        cast(
+            cognito.CfnUserPoolResourceServer,
+            resource_server.node.default_child,
+        )
+    )
+
+    jwt_authorizers = [
+        construct
+        for construct in stack.node.find_all()
+        if isinstance(construct, apigwv2.CfnAuthorizer)
+    ]
+
+    if len(jwt_authorizers) != 1:
+        raise ValueError(
+            "Expected exactly one API Gateway JWT authorizer, "
+            f"found {len(jwt_authorizers)}"
+        )
+
+    jwt_authorizers[0].add_property_override(
+        "JwtConfiguration.Audience",
+        [
+            web_client.user_pool_client_id,
+            client.ref,
+        ],
     )
 
     CfnOutput(stack, "LoadTestClientId", value=client.ref)
