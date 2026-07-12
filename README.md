@@ -304,6 +304,7 @@ Guía: [prueba AWS efímera y controlada](docs/aws-performance-test.md).
 - [Objetivos RTO/RPO](docs/recovery-objectives.md)
 - [Restauración DynamoDB](docs/runbook-dynamodb-restore.md)
 - [SLO provisionales](docs/service-level-objectives.md)
+- [Ownership y matriz RACI](docs/workload-ownership.md)
 - [Controles de coste](docs/cost-controls.md)
 - [Paginación y carga](docs/pagination-load-testing.md)
 - [Baseline local](docs/performance-baseline-local-2026-07-10.md)
@@ -316,12 +317,12 @@ Guía: [prueba AWS efímera y controlada](docs/aws-performance-test.md).
 
 ## Estado Well-Architected
 
-La referencia ya implementa autenticación, autorización, CORS, consultas sin Scan, métricas incrementales, PITR opcional, alarm routing opcional, throttling, supply-chain security, paginación y un baseline local validado.
+La referencia ya implementa autenticación, autorización, CORS, consultas sin Scan, métricas incrementales, PITR opcional, alarm routing opcional, throttling, supply-chain security, paginación, ownership y baselines local y AWS validados.
 
 El workload continúa **sin declararse production-ready** hasta obtener evidencia real de:
 
 - Restore PITR y rollback.
-- Ownership aprobado.
+- Ownership organizativo de producción y cobertura on-call.
 - AWS Budgets y Cost Anomaly Detection activos.
 - Receptor real de alarmas.
 - Tuning comparativo de Lambda, SQS y throttling cuando exista un objetivo
@@ -338,13 +339,14 @@ El workload continúa **sin declararse production-ready** hasta obtener evidenci
 - [x] Cognito, scopes JWT y CORS restringido.
 - [x] DynamoDB Query y métricas incrementales sin Scan.
 - [x] PITR, RTO/RPO, SLO y alarm routing opcional.
+- [x] Ownership técnico y matriz RACI del laboratorio.
 - [x] Throttling, CodeQL, Dependabot, secretos y SBOM.
 - [x] Paginación por cursor y framework de pruebas de carga.
 - [x] Baseline local validado y versionado.
 - [x] Workflow AWS de rendimiento efímero y controlado preparado.
 - [x] Ejecutar el baseline AWS con aprobación, presupuesto y limpieza verificada.
 - [ ] Ajustar recursos únicamente a partir de evidencia AWS comparativa.
-- [ ] Obtener evidencias P1 reales de restore, costes, ownership y alarmas.
+- [ ] Obtener evidencias P1 reales de restore, costes y alarmas.
 
 ## Licencia
 
