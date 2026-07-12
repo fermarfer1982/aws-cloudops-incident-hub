@@ -2,11 +2,40 @@
 
 ## Status
 
-**Prepared but not executed.**
+**Executed and validated on 2026-07-12.**
 
 This runbook defines a bounded AWS performance experiment for the CloudOps Incident Hub. It creates an ephemeral stack, obtains a short-lived machine token, runs a rate-limited test, captures native service metrics, uploads evidence and destroys the stack in the same GitHub Actions job.
 
 The workflow is `.github/workflows/aws-performance-ephemeral.yml`. It has no push, pull-request, schedule or reusable-workflow trigger. It can only be started manually from `main`.
+
+## Latest validated execution
+
+The controlled run `29185526945`, against commit
+`0e3310559a53baacb701b08a090dd8acafca9426`, completed successfully on
+2026-07-12.
+
+Configuration:
+
+- 30 seconds.
+- 2 workers.
+- Global ceiling of 5 requests/s.
+- 1% synthetic writes.
+
+Results:
+
+- 152 requests and 152 successes.
+- 0.0% errors.
+- 5.01 requests/s.
+- p50 123.02 ms.
+- p95 163.59 ms.
+- p99 216.68 ms.
+- No API Gateway 4xx or 5xx responses in the CloudWatch window.
+- No Lambda errors or throttles.
+- Two SQS messages sent, received and deleted.
+- Stack removal verified.
+
+Versioned summary:
+`docs/performance-baseline-aws-2026-07-12.md`.
 
 ## Purpose
 
@@ -196,4 +225,4 @@ A tuning proposal must cite:
 - A comparison run with one controlled parameter changed.
 - Cost implications.
 
-Until an approved run exists, WA-017 remains open for AWS evidence and WA-018 remains open for empirical tuning.
+WA-017 is closed by the validated local and AWS baselines. WA-018 remains open only for comparative tuning when a higher traffic objective or controlled alternative is required.

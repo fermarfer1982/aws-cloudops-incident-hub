@@ -13,6 +13,7 @@ APP = ROOT / "infrastructure" / "app.py"
 PERFORMANCE = ROOT / "infrastructure" / "cloudops_infra" / "aws_performance.py"
 INFRA_TEST = ROOT / "infrastructure" / "tests" / "test_aws_performance.py"
 GUIDE = ROOT / "docs" / "aws-performance-test.md"
+BASELINE = ROOT / "docs" / "performance-baseline-aws-2026-07-12.md"
 ADR = ROOT / "docs" / "adr" / "011-controlled-ephemeral-aws-performance-test.md"
 
 
@@ -145,13 +146,24 @@ def main() -> None:
     require_tokens(
         GUIDE,
         (
-            "Prepared but not executed",
+            "Executed and validated on 2026-07-12",
             "AWS_LOAD_TEST_APPROVED",
             "AWS_COST_CONTROLS_CONFIRMED",
             "8 requests/s",
             "15-minute access token",
             "No access token or client secret belongs in the artifact",
-            "WA-017 remains open for AWS evidence",
+            "WA-017 is closed",
+        ),
+    )
+    require_tokens(
+        BASELINE,
+        (
+            "AWS performance baseline — 2026-07-12",
+            "29185526945",
+            "5.01 req/s",
+            "WA-017",
+            "WA-018",
+            "Stack removal",
         ),
     )
     require_tokens(

@@ -31,7 +31,7 @@ La demo es estática y no expone la red local ni una API AWS.
 - Routing opcional de alarmas mediante SNS.
 - GitHub Actions, OIDC, CodeQL, Dependabot, control de secretos y SBOM.
 - Baseline local validado con p50, p95, p99, throughput e integridad de paginación.
-- Workflow AWS efímero de rendimiento preparado con límites duros y limpieza automática.
+- Baseline AWS efímero validado con Cognito M2M, métricas nativas y limpieza automática.
 - Revisión AWS Well-Architected y blueprint multi-account.
 
 ## Arquitectura AWS de referencia
@@ -172,6 +172,13 @@ El baseline local del 10 de julio de 2026 registró aproximadamente 158–159 le
 
 Evidencia: [baseline local validado](docs/performance-baseline-local-2026-07-10.md).
 
+El baseline AWS controlado del 12 de julio de 2026 sostuvo 5,01 peticiones por
+segundo durante 30 segundos, con 152 solicitudes, 0% de errores, p95 de
+163,59 ms, cero throttles Lambda y procesamiento completo de los dos eventos
+asíncronos.
+
+Evidencia: [baseline AWS validado](docs/performance-baseline-aws-2026-07-12.md).
+
 ## Perfiles CDK
 
 ### Efímero, por defecto
@@ -270,7 +277,7 @@ El workflow de smoke test manual:
 6. Conserva evidencias durante siete días.
 7. Ejecuta `cdk destroy` y comprueba la eliminación.
 
-El workflow de rendimiento AWS está **preparado pero no ejecutado**. Añade:
+El workflow de rendimiento AWS fue **ejecutado y validado el 12 de julio de 2026**. Incluye:
 
 - Aprobación explícita y confirmación de controles de coste.
 - Duración máxima de 60 segundos.
@@ -281,6 +288,10 @@ El workflow de rendimiento AWS está **preparado pero no ejecutado**. Añade:
 - Métricas nativas de API Gateway, Lambda, SQS y DynamoDB.
 - Evidencia saneada durante 14 días.
 - Destrucción obligatoria y verificación del borrado del stack.
+
+La ejecución validada registró 152 solicitudes correctas, 0% de errores,
+p95 de 163,59 ms y ausencia de throttling. El stack fue destruido y
+`AWS_LOAD_TEST_APPROVED` volvió a `false`.
 
 No se almacenan access keys AWS en GitHub. No se debe ejecutar una prueba de carga en AWS sin aprobación, presupuesto, límites de tráfico y limpieza.
 
@@ -296,6 +307,7 @@ Guía: [prueba AWS efímera y controlada](docs/aws-performance-test.md).
 - [Controles de coste](docs/cost-controls.md)
 - [Paginación y carga](docs/pagination-load-testing.md)
 - [Baseline local](docs/performance-baseline-local-2026-07-10.md)
+- [Baseline AWS](docs/performance-baseline-aws-2026-07-12.md)
 - [Prueba AWS controlada](docs/aws-performance-test.md)
 - [Well-Architected Review](docs/well-architected-review.md)
 - [Backlog Well-Architected](docs/well-architected-backlog.md)
@@ -312,8 +324,8 @@ El workload continúa **sin declararse production-ready** hasta obtener evidenci
 - Ownership aprobado.
 - AWS Budgets y Cost Anomaly Detection activos.
 - Receptor real de alarmas.
-- Baseline AWS aprobado y artifact revisado.
-- Ajuste empírico de Lambda, SQS y throttling.
+- Tuning comparativo de Lambda, SQS y throttling cuando exista un objetivo
+  de escala superior al baseline actual.
 - Game day y revisión Well-Architected posterior.
 
 ## Roadmap
@@ -330,7 +342,7 @@ El workload continúa **sin declararse production-ready** hasta obtener evidenci
 - [x] Paginación por cursor y framework de pruebas de carga.
 - [x] Baseline local validado y versionado.
 - [x] Workflow AWS de rendimiento efímero y controlado preparado.
-- [ ] Ejecutar el baseline AWS con aprobación, presupuesto y limpieza verificada.
+- [x] Ejecutar el baseline AWS con aprobación, presupuesto y limpieza verificada.
 - [ ] Ajustar recursos únicamente a partir de evidencia AWS comparativa.
 - [ ] Obtener evidencias P1 reales de restore, costes, ownership y alarmas.
 

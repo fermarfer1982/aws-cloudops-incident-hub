@@ -4,10 +4,10 @@
 
 - **Workload:** AWS CloudOps Incident Hub
 - **Review type:** Repository-based self-assessment
-- **Review date:** 2026-07-10
+- **Review date:** 2026-07-12
 - **Reviewer:** Fernando Martínez Fernández
 - **Framework:** AWS Well-Architected Framework, six pillars
-- **Environment assessed:** Local zero-cost laboratory plus the proposed ephemeral AWS architecture
+- **Environment assessed:** Local zero-cost laboratory plus one validated ephemeral AWS performance deployment
 - **Production readiness:** Not production-ready
 
 > This document is a technical self-assessment, not an AWS Well-Architected Tool review and not an external audit. Findings are based on evidence versioned in this repository. A control marked as completed in the reference implementation still requires deployment evidence and operational validation before production use.
@@ -36,13 +36,13 @@ No persistent production traffic profile, RTO, RPO, SLO, compliance regime, data
 | Operational excellence | Medium | IaC, CI, runbooks, smoke evidence and cleanup | No approved SLO, ownership or alert-routing process |
 | Security | Medium for production reference | Cognito JWT scopes, OIDC federation, explicit CORS and least privilege | No abuse protection, data classification or supply-chain security baseline |
 | Reliability | Medium | EventBridge, SQS, DLQ, retries, idempotency and alarms | No approved RTO/RPO, restore test or regional recovery strategy |
-| Performance efficiency | Medium | Query-oriented indexes, incremental metrics, ARM64 and batching | No pagination contract, load test or empirical tuning |
+| Performance efficiency | Medium | Query pagination, incremental metrics, ARM64 and validated local/AWS baselines | No sustained-capacity test or comparative tuning |
 | Cost optimization | Low for laboratory / Medium for production | Ephemeral lifecycle and cost guardrails | No AWS Budget, anomaly detection or measured unit economics |
 | Sustainability | Low for laboratory / Medium for production | Ephemeral resources, managed services and query access patterns | No utilization baseline or sustainability KPI |
 
 ### Overall conclusion
 
-WA-001 through WA-005 are closed in the reference implementation: the cloud API is authenticated and scope-authorized, CORS is explicit, operational listings use DynamoDB Query and metrics are materialized transactionally. The workload remains **not production-ready** because recovery objectives, tested restore, SLOs, ownership, alarm routing, financial controls, abuse protection and workload evidence are still missing.
+WA-001 through WA-005 are closed in the reference implementation: the cloud API is authenticated and scope-authorized, CORS is explicit, operational listings use DynamoDB Query and metrics are materialized transactionally. The workload remains **not production-ready** because recovery objectives, tested restore, approved SLOs, ownership, alarm routing, complete financial evidence, abuse protection and sustained-capacity evidence are still missing.
 
 ---
 
@@ -92,7 +92,7 @@ Define workload ownership and measurable SLOs, route alarms to an approved chann
 |---|---|---|---|
 | SEC-01 | API Gateway endpoint has no authentication or authorization | Critical | Closed in reference implementation |
 | SEC-02 | CORS allows every origin | High | Closed in reference implementation |
-| SEC-03 | No WAF decision, throttling policy, request quota or abuse protection | High | Open |
+| SEC-03 | WAF decision and abuse protection remain incomplete | High | Throttling defined and validated at 5 requests/s; broader protection open |
 | SEC-04 | No formal data classification, retention policy or privacy assessment | High | Open |
 | SEC-05 | No dependency vulnerability scanning, secret scanning policy or SBOM | Medium | Open |
 | SEC-06 | Effective CDK bootstrap-role permissions require separate review | Medium | Open |
@@ -145,12 +145,15 @@ Define RTO/RPO, enable PITR for persistent environments, test restore and region
 
 ## Evidence
 
-- Lambda uses ARM64, bounded memory and reserved concurrency.
-- SQS processing uses batches and a batching window.
+- Lambda uses Python 3.13 on ARM64 with bounded 256 MB memory.
+- SQS processing uses batch size 10, a five-second batching window and maximum concurrency two.
 - The incidents table has GSIs for time, site, status and severity.
-- `GET /events` uses DynamoDB Query rather than Scan.
+- `GET /events` uses DynamoDB Query and opaque continuation-token pagination.
+- Local pagination validation traversed 365 unique IDs with zero duplicates.
 - Metrics are maintained as transactional incremental aggregates.
-- Lambda duration and throttling metrics are available.
+- The controlled AWS baseline completed 152 requests at 5.01 requests/s with 0% errors.
+- API and processor Lambdas recorded zero errors and zero throttles.
+- Two asynchronous SQS messages were sent, received and deleted.
 
 ## Risks and gaps
 
@@ -158,18 +161,18 @@ Define RTO/RPO, enable PITR for persistent environments, test restore and region
 |---|---|---|---|
 | PERF-01 | `GET /events` uses DynamoDB Scan and in-memory filtering | High at scale | Closed in reference implementation |
 | PERF-02 | Metrics scan and aggregate incident records synchronously | High at scale | Closed in reference implementation |
-| PERF-03 | No load test, throughput objective or representative traffic model | High | Open |
-| PERF-04 | Reserved concurrency of two may throttle legitimate bursts | Medium | Intentional laboratory guardrail |
-| PERF-05 | Memory, timeout and batch settings lack empirical tuning | Medium | Open |
-| PERF-06 | No continuation-token pagination contract is exposed | Medium | Open |
+| PERF-03 | No load test, throughput objective or representative traffic model | High | Closed for the controlled laboratory baseline; sustained production profile remains open |
+| PERF-04 | API throttling and SQS maximum concurrency may constrain larger bursts | Medium | Intentional laboratory guardrails; no throttling observed at 5 requests/s |
+| PERF-05 | Memory, timeout and batch settings require comparative tuning for larger targets | Medium | Current settings retained from AWS evidence; comparative run open |
+| PERF-06 | No continuation-token pagination contract is exposed | Medium | Closed and validated locally |
 
 ## Recommended actions
 
-Add opaque continuation tokens, run representative load tests, inspect hot partitions and tune Lambda concurrency, memory and SQS batch settings from measurements.
+Repeat the AWS test with a longer or higher approved traffic profile only when a business objective requires it. Any tuning proposal must compare one controlled parameter, inspect throttles and backlog, and record cost implications.
 
 ## Pillar rating
 
-**Medium risk.** The primary Scan bottlenecks are removed, but scale behavior has not been measured and pagination remains incomplete.
+**Medium risk.** Query access, pagination and a conservative AWS baseline are validated, but sustained capacity, production data volume and comparative tuning remain unmeasured.
 
 ---
 
@@ -238,7 +241,7 @@ Measure useful work per Lambda invocation and GB-second, define retention by bus
 ## Production blockers
 
 1. **SEC-01 / SEC-02:** Closed in reference; validate Cognito federation, scopes and CORS in the target environment.
-2. **PERF-01 / PERF-02:** Closed in reference; validate indexes and aggregates under representative load.
+2. **PERF-01 / PERF-02 / PERF-03 / PERF-06:** Closed for the controlled reference baseline; repeat only for a higher production traffic objective.
 3. **REL-01 / REL-02 / REL-03:** Define RTO/RPO, enable recovery controls and test restore.
 4. **OPS-01 / OPS-02:** Assign ownership and approve SLOs.
 5. **COST-01:** Configure account-level financial controls.
@@ -253,8 +256,8 @@ The following choices are acceptable only because this is a short-lived portfoli
 - No point-in-time recovery.
 - One-day log retention.
 - No alarm notification actions.
-- Small reserved concurrency.
-- No API continuation-token pagination.
+- Conservative SQS event-source maximum concurrency of two.
+- The 30-second, 5 requests/s baseline does not prove sustained or peak production capacity.
 
 ## Review cadence
 
@@ -266,6 +269,11 @@ Repeat this review before real users or data, after identity or recovery changes
 - `infrastructure/cloudops_infra/stack.py`
 - `.github/workflows/validate.yml`
 - `.github/workflows/deploy-ephemeral.yml`
+- `.github/workflows/aws-performance-ephemeral.yml`
+- `scripts/run_load_test.py`
+- `scripts/collect_aws_performance_evidence.py`
+- `docs/performance-baseline-local-2026-07-10.md`
+- `docs/performance-baseline-aws-2026-07-12.md`
 - `scripts/check_p0_controls.py`
 - `docs/p0-production-controls.md`
 - `docs/observability.md`

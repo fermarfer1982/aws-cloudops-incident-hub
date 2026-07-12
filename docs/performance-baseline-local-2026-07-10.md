@@ -157,7 +157,7 @@ The `artifacts/` directory remains ignored by Git because raw reports are execut
 | Should API Gateway throttling change now? | No |
 | Should Lambda memory or reserved concurrency change now? | No |
 | Should SQS batch size or batching window change now? | No |
-| Is another run required? | Yes, against an approved ephemeral AWS environment with cost and traffic controls |
+| Is another run required? | The approved AWS follow-up was completed on 2026-07-12 |
 
 ## Scope and limitations
 
@@ -179,4 +179,4 @@ It does not measure:
 - DynamoDB service capacity, throttling or consumed capacity.
 - AWS cost per 1,000 incidents.
 
-Accordingly, WA-016 is complete, while WA-017 is complete only for the local laboratory. AWS baseline evidence and WA-018 tuning remain open.
+Accordingly, WA-016 is complete. This local result is supplemented by the validated AWS baseline in `docs/performance-baseline-aws-2026-07-12.md`; WA-017 is closed, while WA-018 comparative tuning remains open.

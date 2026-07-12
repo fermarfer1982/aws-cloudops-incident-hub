@@ -27,7 +27,7 @@ The workflow will:
 10. Destroy the stack and verify removal regardless of the test result.
 11. Fail the workflow when the load test or cleanup does not succeed.
 
-The workflow will be prepared in code but will not be executed without explicit authorization and account prerequisites.
+The workflow was prepared in code and executed only after explicit authorization and confirmation of account prerequisites.
 
 ## Consequences
 
@@ -70,10 +70,24 @@ Rejected because throttling is a protection mechanism, not a substitute for an e
 
 Rejected because it would weaken the cost and cleanup guarantees of the portfolio laboratory.
 
-## Follow-up evidence
+## Outcome
 
-- A successful manual workflow run with sanitized artifact.
-- Verified stack removal.
-- CloudWatch metrics with any missing datapoints documented.
-- Post-run Cost Explorer review after billing data is available.
-- A tuning decision that either retains current settings or compares one controlled alternative.
+The controlled run `29185526945` completed successfully on 2026-07-12:
+
+- 152 successful requests and no failures.
+- 5.01 requests/s.
+- p95 latency of 163.59 ms.
+- No API Gateway 4xx or 5xx responses in the metric window.
+- No Lambda errors or throttles.
+- Two SQS messages sent, received and deleted.
+- Sanitized evidence uploaded.
+- Stack removal verified.
+- Current compute, batching and throttling settings retained.
+
+Versioned evidence:
+`docs/performance-baseline-aws-2026-07-12.md`.
+
+## Remaining follow-up
+
+- Review Cost Explorer after final billing data becomes available.
+- Run a controlled comparison only when a higher traffic objective justifies tuning.
