@@ -9,7 +9,7 @@ This phase adds an optional persistent deployment profile without changing the d
 - Thirty-day retention and `Retain` policies for the two Lambda log groups in persistent mode.
 - Optional CloudWatch alarm delivery through a dedicated SNS topic.
 - Email subscription confirmation remains mandatory before messages are delivered.
-- Initial recovery objectives, service-level objectives, restore runbook and cost-control checklist.
+- Initial recovery objectives, service-level objectives, restore runbook, cost-control checklist and sanitized laboratory cost-governance evidence.
 - CI guardrails that verify the controls and keep ephemeral mode unchanged.
 
 ## Deployment profiles
@@ -65,7 +65,7 @@ These are engineering targets to validate through restore exercises. They are no
 - No real restore exercise has been executed in an AWS account.
 - No approved service owner or on-call rotation exists.
 - No confirmed notification recipient exists by default.
-- AWS Budgets and Cost Anomaly Detection remain account-level controls and are not provisioned by the workload stack.
+- AWS Budgets and Cost Anomaly Detection are active and evidenced for the laboratory account; production tagging, budget approval and post-billing review remain pending.
 - Regional recovery remains documented but untested.
 - The provisional SLOs do not yet have a representative production traffic baseline.
 

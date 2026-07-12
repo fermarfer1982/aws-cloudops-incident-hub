@@ -37,7 +37,7 @@ No persistent production traffic profile, RTO, RPO, SLO, compliance regime, data
 | Security | Medium for production reference | Cognito JWT scopes, OIDC federation, explicit CORS and least privilege | No abuse protection, data classification or supply-chain security baseline |
 | Reliability | Medium | EventBridge, SQS, DLQ, retries, idempotency and alarms | No approved RTO/RPO, restore test or regional recovery strategy |
 | Performance efficiency | Medium | Query pagination, incremental metrics, ARM64 and validated local/AWS baselines | No sustained-capacity test or comparative tuning |
-| Cost optimization | Low for laboratory / Medium for production | Ephemeral lifecycle and cost guardrails | No AWS Budget, anomaly detection or measured unit economics |
+| Cost optimization | Low for laboratory / Medium for production | Ephemeral lifecycle, two budgets and anomaly detection evidence | No production unit economics, tag evidence or approved production budget |
 | Sustainability | Low for laboratory / Medium for production | Ephemeral resources, managed services and query access patterns | No utilization baseline or sustainability KPI |
 
 ### Overall conclusion
@@ -186,12 +186,18 @@ Repeat the AWS test with a longer or higher approved traffic profile only when a
 - AWS deployment is manual, temporary and automatically destroyed.
 - Static guardrails reject high-risk fixed-cost resources.
 - DynamoDB uses on-demand capacity and Lambda compute is bounded.
+- The laboratory account has two monthly budgets with actual and forecasted
+  notifications.
+- A service-dimensional anomaly monitor and two daily anomaly subscriptions are
+  configured.
+- Sanitized evidence is versioned in
+  `docs/aws-cost-governance-evidence-2026-07-12.md`.
 
 ## Risks and gaps
 
 | ID | Risk | Severity | Status |
 |---|---|---|---|
-| COST-01 | No AWS Budget, anomaly monitor or billing alarm is defined | High before real deployment | Open |
+| COST-01 | No AWS Budget, anomaly monitor or billing alarm is defined | High before real deployment | Closed for laboratory budgets and anomaly detection; production approval remains open |
 | COST-02 | Cost allocation tags are incomplete | Medium | Open |
 | COST-03 | No cost-per-incident model exists | Medium | Open |
 | COST-04 | CDK bootstrap resources may remain after stack destruction | Medium | Documented |
@@ -200,11 +206,11 @@ Repeat the AWS test with a longer or higher approved traffic profile only when a
 
 ## Recommended actions
 
-Configure account-level budgets and anomaly detection before deployment, complete tagging, estimate cost per 1,000 incidents and inventory orphaned resources.
+Retain the laboratory budget and anomaly evidence, complete production tagging, approve a production-specific budget, estimate cost per 1,000 incidents and inventory orphaned resources.
 
 ## Pillar rating
 
-**Low risk for the laboratory and medium risk for production.** Lifecycle controls are strong, but financial governance is not implemented.
+**Low risk for the laboratory and medium risk for production.** Laboratory budgets and anomaly alerts are evidenced, but production tagging, unit economics, forecasting and financial approval remain incomplete.
 
 ---
 
@@ -277,6 +283,8 @@ Repeat this review before real users or data, after identity or recovery changes
 - `docs/performance-baseline-local-2026-07-10.md`
 - `docs/performance-baseline-aws-2026-07-12.md`
 - `docs/workload-ownership.md`
+- `docs/aws-cost-governance-evidence-2026-07-12.md`
+- `docs/evidence/aws-cost-governance-2026-07-12.json`
 - `scripts/check_p0_controls.py`
 - `docs/p0-production-controls.md`
 - `docs/observability.md`
