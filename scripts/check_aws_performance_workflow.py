@@ -163,7 +163,7 @@ def main() -> None:
             "5.01 req/s",
             "WA-017",
             "WA-018",
-            "Stack removal",
+            "Was stack removal verified?",
         ),
     )
     require_tokens(
