@@ -85,8 +85,15 @@ Resources:
                 Effect: Allow
                 Action:
                   - cloudwatch:SetAlarmState
-                Resource: !Sub >-
-                  arn:${AWS::Partition}:cloudwatch:${DeploymentRegion}:${AWS::AccountId}:alarm:CloudOpsIncidentHubStack-*
+                Resource:
+                  - !Sub >-
+                      arn:${AWS::Partition}:cloudwatch:${DeploymentRegion}:${AWS::AccountId}:alarm:cloudops-api-function-errors
+                  - !Sub >-
+                      arn:${AWS::Partition}:cloudwatch:${DeploymentRegion}:${AWS::AccountId}:alarm:cloudops-processor-function-errors
+                  - !Sub >-
+                      arn:${AWS::Partition}:cloudwatch:${DeploymentRegion}:${AWS::AccountId}:alarm:cloudops-processing-queue-age
+                  - !Sub >-
+                      arn:${AWS::Partition}:cloudwatch:${DeploymentRegion}:${AWS::AccountId}:alarm:cloudops-processing-dlq-messages
               - Sid: PublishSmokeEvent
                 Effect: Allow
                 Action: events:PutEvents
