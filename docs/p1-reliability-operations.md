@@ -60,7 +60,7 @@ It creates one SNS topic, connects all four alarms in `ALARM` and `OK`, and conf
 
 Real workspace and channel identifiers are not committed.
 
-The infrastructure has been synthesized and tested locally. Real `ALARM` and `OK` delivery evidence is still pending.
+The infrastructure has been synthesized and tested locally. Real `ALARM` and `OK` delivery was validated through ephemeral GitHub Actions run `29234347159`, with visual Slack evidence and verified stack removal.
 
 ## Recovery targets
 
@@ -76,7 +76,6 @@ These are engineering targets to validate through restore exercises. They are no
 
 - No real restore exercise has been executed in an AWS account.
 - No approved service owner or on-call rotation exists.
-- ChatOps IaC is validated, but real `ALARM` and `OK` delivery evidence is still pending.
 - AWS Budgets and Cost Anomaly Detection are active and evidenced for the laboratory account; production tagging, budget approval and post-billing review remain pending.
 - Regional recovery remains documented but untested.
 - The provisional SLOs do not yet have a representative production traffic baseline.

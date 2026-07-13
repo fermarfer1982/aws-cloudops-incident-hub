@@ -41,7 +41,7 @@ Para activarla deben proporcionarse juntos `slack_workspace_id` y `slack_channel
 
 El perfil crea un tópico SNS, conecta las cuatro alarmas en estados `ALARM` y `OK`, configura Amazon Q para Slack y aplica una política IAM de mínimo privilegio. El logging de Amazon Q permanece desactivado.
 
-La infraestructura está validada mediante tests y síntesis local. La entrega real en Slack continúa pendiente de una prueba AWS controlada.
+La infraestructura está validada mediante tests, síntesis local y una prueba AWS controlada. El workflow `29234347159` confirmó la entrega real de las transiciones `ALARM` y `OK` en Slack y la destrucción posterior del stack efímero.
 
 ## Principios de diseño
 
