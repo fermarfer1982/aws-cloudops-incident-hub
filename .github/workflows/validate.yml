@@ -98,6 +98,9 @@ jobs:
       - name: Enforce P1 reliability and operations controls
         run: python scripts/check_p1_controls.py
 
+      - name: Enforce ChatOps architecture guardrails
+        run: python scripts/check_chatops_controls.py
+
       - name: Enforce operational security and supply-chain controls
         run: python scripts/check_security_supply_chain.py
 

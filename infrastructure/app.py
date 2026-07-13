@@ -76,6 +76,8 @@ app = App()
 persistent_environment = bool_context(app, "persistent_environment")
 enable_load_test_client = bool_context(app, "enable_load_test_client")
 alarm_notification_email = optional_string_context(app, "alarm_notification_email")
+slack_workspace_id = optional_string_context(app, "slack_workspace_id")
+slack_channel_id = optional_string_context(app, "slack_channel_id")
 api_throttling_rate_limit = positive_float_context(
     app,
     "api_throttling_rate_limit",
@@ -112,6 +114,8 @@ apply_reliability_controls(
     stack,
     persistent_environment=persistent_environment,
     alarm_notification_email=alarm_notification_email,
+    slack_workspace_id=slack_workspace_id,
+    slack_channel_id=slack_channel_id,
 )
 apply_aws_performance_controls(
     stack,
