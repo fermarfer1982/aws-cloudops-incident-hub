@@ -72,8 +72,21 @@ Resources:
                   - cloudformation:DescribeStacks
                   - cloudformation:DescribeStackEvents
                   - cloudformation:DescribeStackResources
+                  - cloudformation:ListStackResources
                   - cloudformation:GetTemplate
                 Resource: "*"
+              - Sid: ReadChatOpsAlarmEvidence
+                Effect: Allow
+                Action:
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:DescribeAlarmHistory
+                Resource: "*"
+              - Sid: ExerciseProjectAlarms
+                Effect: Allow
+                Action:
+                  - cloudwatch:SetAlarmState
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:cloudwatch:${DeploymentRegion}:${AWS::AccountId}:alarm:CloudOpsIncidentHubStack-*
               - Sid: PublishSmokeEvent
                 Effect: Allow
                 Action: events:PutEvents
