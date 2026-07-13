@@ -13,6 +13,11 @@ on:
         required: true
         default: true
         type: boolean
+      run_chatops_test:
+        description: Route controlled ALARM and OK transitions to Slack
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -34,6 +39,9 @@ jobs:
       AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
       CDK_DEFAULT_REGION: ${{ vars.AWS_REGION }}
       CDK_DEFAULT_ACCOUNT: ${{ vars.AWS_ACCOUNT_ID }}
+      RUN_CHATOPS_TEST: ${{ inputs.run_chatops_test }}
+      SLACK_WORKSPACE_ID: ${{ secrets.SLACK_WORKSPACE_ID }}
+      SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
 
     steps:
       - name: Validate explicit confirmation
@@ -52,6 +60,10 @@ jobs:
           test -n "$AWS_REGION"
           test -n "$AWS_ACCOUNT_ID"
           test -n "$AWS_DEPLOY_ROLE_ARN"
+          if [ "$RUN_CHATOPS_TEST" = "true" ]; then
+            test -n "$SLACK_WORKSPACE_ID"
+            test -n "$SLACK_CHANNEL_ID"
+          fi
 
       - uses: actions/checkout@v4
 
@@ -90,23 +102,223 @@ jobs:
         working-directory: infrastructure
         run: |
           python -m pytest -q tests
-          cdk synth "$STACK_NAME" --quiet \
-            -c account="$AWS_ACCOUNT_ID" \
+
+          default_context=(
+            -c account="$AWS_ACCOUNT_ID"
             -c region="$AWS_REGION"
+          )
+
+          cdk synth "$STACK_NAME" --quiet "${default_context[@]}"
           python ../scripts/check_lambda_bundle_architecture.py cdk.out
           python ../scripts/check_zero_cost.py \
             "cdk.out/${STACK_NAME}.template.json"
           python ../scripts/check_p0_controls.py
 
+          if [ "$RUN_CHATOPS_TEST" = "true" ]; then
+            rm -rf cdk.out
+            chatops_context=(
+              "${default_context[@]}"
+              -c slack_workspace_id="$SLACK_WORKSPACE_ID"
+              -c slack_channel_id="$SLACK_CHANNEL_ID"
+            )
+            cdk synth "$STACK_NAME" --quiet "${chatops_context[@]}"
+            python ../scripts/check_chatops_controls.py
+          fi
+
       - name: Deploy ephemeral stack
         working-directory: infrastructure
         run: |
           mkdir -p ../evidence
+
+          deploy_context=(
+            -c account="$AWS_ACCOUNT_ID"
+            -c region="$AWS_REGION"
+          )
+
+          if [ "$RUN_CHATOPS_TEST" = "true" ]; then
+            deploy_context+=(
+              -c slack_workspace_id="$SLACK_WORKSPACE_ID"
+              -c slack_channel_id="$SLACK_CHANNEL_ID"
+            )
+          fi
+
           cdk deploy "$STACK_NAME" \
             --require-approval never \
             --outputs-file ../evidence/cdk-outputs.json \
-            -c account="$AWS_ACCOUNT_ID" \
-            -c region="$AWS_REGION"
+            "${deploy_context[@]}"
+
+      - name: Exercise controlled ChatOps ALARM and OK transitions
+        if: inputs.run_chatops_test
+        env:
+          CHATOPS_ALARM_LOGICAL_PREFIX: ApiFunctionErrorsAlarm
+        run: |
+          set -euo pipefail
+
+          mkdir -p evidence/chatops
+
+          aws cloudformation list-stack-resources \
+            --stack-name "$STACK_NAME" \
+            --region "$AWS_REGION" \
+            > evidence/chatops/stack-resources.json
+
+          python - <<'PYTHON'
+          import json
+          from pathlib import Path
+
+          path = Path("evidence/chatops/stack-resources.json")
+          resources = json.loads(path.read_text(encoding="utf-8")).get(
+              "StackResourceSummaries",
+              [],
+          )
+
+          resource_types = [
+              resource.get("ResourceType", "")
+              for resource in resources
+          ]
+
+          required = {
+              "AWS::SNS::Topic",
+              "AWS::Chatbot::SlackChannelConfiguration",
+          }
+
+          missing = required.difference(resource_types)
+
+          if missing:
+              raise SystemExit(
+                  "Missing deployed ChatOps resources: "
+                  + ", ".join(sorted(missing))
+              )
+
+          summary = {
+              "sns_topics": resource_types.count("AWS::SNS::Topic"),
+              "slack_configurations": resource_types.count(
+                  "AWS::Chatbot::SlackChannelConfiguration"
+              ),
+              "cloudwatch_alarms": resource_types.count(
+                  "AWS::CloudWatch::Alarm"
+              ),
+          }
+
+          Path("evidence/chatops/resource-summary.json").write_text(
+              json.dumps(summary, indent=2) + "\n",
+              encoding="utf-8",
+          )
+
+          print(summary)
+          PYTHON
+
+          ALARM_NAME=$(
+            aws cloudformation list-stack-resources \
+              --stack-name "$STACK_NAME" \
+              --region "$AWS_REGION" \
+              --query "StackResourceSummaries[?ResourceType=='AWS::CloudWatch::Alarm' && starts_with(LogicalResourceId, '$CHATOPS_ALARM_LOGICAL_PREFIX')].PhysicalResourceId | [0]" \
+              --output text
+          )
+
+          test -n "$ALARM_NAME"
+          test "$ALARM_NAME" != "None"
+
+          export ALARM_NAME
+
+          printf '%s\n' "$ALARM_NAME" \
+            > evidence/chatops/alarm-name.txt
+
+          aws cloudwatch describe-alarms \
+            --alarm-names "$ALARM_NAME" \
+            --region "$AWS_REGION" \
+            > evidence/chatops/alarm-before.json
+
+          aws cloudwatch set-alarm-state \
+            --alarm-name "$ALARM_NAME" \
+            --state-value ALARM \
+            --state-reason "Controlled WA-014 ALARM test from GitHub run ${GITHUB_RUN_ID}" \
+            --region "$AWS_REGION"
+
+          date -u +"%Y-%m-%dT%H:%M:%SZ ALARM requested" \
+            | tee evidence/chatops/alarm-transition.txt
+
+          sleep 20
+
+          aws cloudwatch set-alarm-state \
+            --alarm-name "$ALARM_NAME" \
+            --state-value OK \
+            --state-reason "Controlled WA-014 OK recovery from GitHub run ${GITHUB_RUN_ID}" \
+            --region "$AWS_REGION"
+
+          date -u +"%Y-%m-%dT%H:%M:%SZ OK requested" \
+            | tee -a evidence/chatops/alarm-transition.txt
+
+          sleep 20
+
+          aws cloudwatch describe-alarms \
+            --alarm-names "$ALARM_NAME" \
+            --region "$AWS_REGION" \
+            > evidence/chatops/alarm-after.json
+
+          aws cloudwatch describe-alarm-history \
+            --alarm-name "$ALARM_NAME" \
+            --history-item-type StateUpdate \
+            --max-records 20 \
+            --region "$AWS_REGION" \
+            > evidence/chatops/alarm-history.json
+
+          python - <<'PYTHON'
+          import json
+          import os
+          from pathlib import Path
+
+          history_path = Path("evidence/chatops/alarm-history.json")
+          history = json.loads(
+              history_path.read_text(encoding="utf-8")
+          )
+
+          states = []
+          summaries = []
+
+          for item in history.get("AlarmHistoryItems", []):
+              summaries.append(item.get("HistorySummary", ""))
+
+              raw_data = item.get("HistoryData", "")
+              if not raw_data:
+                  continue
+
+              try:
+                  data = json.loads(raw_data)
+              except json.JSONDecodeError:
+                  continue
+
+              state = (
+                  data.get("newState", {})
+                  .get("stateValue")
+              )
+
+              if state:
+                  states.append(state)
+
+          required_states = {"ALARM", "OK"}
+          missing = required_states.difference(states)
+
+          if missing:
+              raise SystemExit(
+                  "Missing CloudWatch state transitions: "
+                  + ", ".join(sorted(missing))
+              )
+
+          evidence = {
+              "alarm_name": os.environ["ALARM_NAME"],
+              "observed_states": states,
+              "history_summaries": summaries,
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+              "slack_delivery_requires_visual_confirmation": True,
+          }
+
+          Path("evidence/chatops/transition-summary.json").write_text(
+              json.dumps(evidence, indent=2) + "\n",
+              encoding="utf-8",
+          )
+
+          print("CloudWatch ALARM and OK transitions verified")
+          PYTHON
 
       - name: Load deployment outputs
         if: inputs.run_smoke_test
