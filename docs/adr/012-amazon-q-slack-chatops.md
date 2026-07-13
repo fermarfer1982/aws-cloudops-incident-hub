@@ -2,7 +2,7 @@
 
 ## Estado
 
-Aceptado para la arquitectura de referencia. La entrega real de alarmas sigue pendiente de validación.
+Aceptado y validado para la arquitectura de referencia mediante una prueba AWS controlada con entrega real en Slack.
 
 ## Contexto
 
@@ -35,16 +35,23 @@ El perfil predeterminado continúa sin SNS y sin Amazon Q.
 - No se utiliza `AdministratorAccess`.
 - Los recursos se eliminan junto con el stack.
 - La autorización inicial del workspace es manual.
-- La prueba AWS controlada de entrega real sigue pendiente.
+- La entrega real `ALARM` y `OK` fue validada el 13 de julio de 2026 mediante el workflow `29234347159`.
 - Este cambio no convierte el workload en production-ready.
 
-## Evidencia pendiente
+## Evidencia de validación
 
-Antes de cerrar WA-014 se debe conservar evidencia saneada de:
+WA-014 se validó mediante el workflow efímero `29234347159`.
 
-1. Despliegue controlado.
-2. Transición a `ALARM`.
-3. Recepción en Slack.
-4. Transición a `OK`.
-5. Recepción de la recuperación.
-6. Destrucción verificada del stack.
+La prueba confirmó:
+
+1. Despliegue de un tópico SNS.
+2. Despliegue de una configuración Amazon Q para Slack.
+3. Existencia de cuatro alarmas de CloudWatch.
+4. Transición controlada de `OK` a `ALARM`.
+5. Entrega de la alarma en Slack.
+6. Transición controlada de `ALARM` a `OK`.
+7. Entrega de la recuperación en Slack.
+8. Destrucción y eliminación verificadas del stack efímero.
+
+La evidencia técnica y visual está documentada en
+[`wa-014-chatops-evidence-2026-07-13.md`](../wa-014-chatops-evidence-2026-07-13.md).

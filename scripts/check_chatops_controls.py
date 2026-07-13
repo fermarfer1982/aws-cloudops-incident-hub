@@ -83,8 +83,8 @@ def main() -> None:
         "Missing ChatOps P1 documentation",
     )
     require(
-        "evidencia ALARM/OK pendientes" in backlog,
-        "WA-014 status is not updated",
+        "Completado: entrega real ALARM/OK en Slack" in backlog,
+        "WA-014 completion status is missing",
     )
     require(
         "mínimo privilegio" in adr,
