@@ -24,6 +24,10 @@ para producción.
 - Endpoint FastAPI local con inyección de dependencias y errores estables.
 - Tests unitarios y de API sin red, AWS, credenciales ni sleeps.
 - Feature flag desactivada por defecto.
+- Dataset sintético versionado y evaluador local determinista.
+- Informe JSON reproducible y CLI para predicciones guardadas.
+- Validaciones estructurales, grounding exacto, causas permitidas, completitud y
+  afirmaciones prohibidas.
 
 ### Pendiente
 
@@ -31,12 +35,16 @@ para producción.
 - Lambda dedicada, API Gateway y scope Cognito de lectura.
 - Métricas custom de CloudWatch y Amazon Bedrock Guardrails.
 - Workflow AWS manual y controlado.
-- Evaluación con modelos reales y evidencia de laboratorio AWS.
+- Selección y aprobación de modelo, acceso al modelo e inferencias reales.
+- Evaluación semántica y groundedness con evaluadores reales.
+- Coste y latencia reales y evidencia de laboratorio AWS.
 - Decisiones WA-021 sobre clasificación, privacidad y retención.
 - Cambio de ADR-013 de **Proposed** a **Accepted** tras evidencia real.
 
 Este estado no completa ninguna fase AWS del diseño histórico. El modo fake es
 solo para laboratorio local con datos sintéticos y no representa inferencia real.
+El arnés local evalúa un contrato determinista; no valida la calidad de un LLM ni
+reemplaza evaluación humana, Bedrock Evaluations o pruebas con modelos reales.
 
 ## 2. Problema que resuelve
 

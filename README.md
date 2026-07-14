@@ -312,6 +312,13 @@ La feature y el proveedor real están desactivados por defecto,
 [ADR-013](docs/adr/013-amazon-bedrock-incident-copilot.md) permanece **Proposed** y
 el proyecto continúa **not production-ready**.
 
+El repositorio incluye además un arnés local y determinista de evaluación con
+casos y predicciones completamente sintéticos. Valida el esquema, el grounding por
+coincidencia exacta, las causas permitidas, la información ausente obligatoria y
+las afirmaciones prohibidas, y genera un informe JSON reproducible. No ejecuta
+modelos ni mide calidad semántica general; tampoco sustituye la evaluación humana,
+las evaluaciones con modelos reales ni constituye evidencia AWS.
+
 El modo local actual no usa Cognito y solo debe ejecutarse en una red de laboratorio
 confiable y con datos sintéticos. Una futura exposición AWS deberá crear una ruta de
 API Gateway y exigir el scope de lectura apropiado; este endpoint todavía no está

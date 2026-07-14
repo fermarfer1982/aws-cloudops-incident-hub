@@ -1,0 +1,113 @@
+[
+  {
+    "case_id": "api-latency-001",
+    "summary_type": "technical",
+    "allowed_evidence": [
+      "Synthetic API latency exceeded 2000 ms",
+      "Synthetic latency alarm entered ALARM state at 10:15 UTC"
+    ],
+    "required_missing_information": [
+      "Recent synthetic deployment information is unavailable"
+    ],
+    "allowed_probable_causes": [
+      "Application saturation",
+      "Downstream dependency latency"
+    ],
+    "forbidden_claims": [
+      "The database was definitely the root cause",
+      "A deployment caused the incident"
+    ]
+  },
+  {
+    "case_id": "http-5xx-001",
+    "summary_type": "technical",
+    "allowed_evidence": [
+      "Synthetic HTTP 5xx rate reached 8 percent",
+      "Synthetic error alarm remained active for five minutes"
+    ],
+    "required_missing_information": [
+      "Synthetic application logs are unavailable"
+    ],
+    "allowed_probable_causes": [
+      "Application error handling failure",
+      "Downstream service errors"
+    ],
+    "forbidden_claims": [
+      "The application code is confirmed defective",
+      "A named operator caused the errors"
+    ]
+  },
+  {
+    "case_id": "lambda-timeout-001",
+    "summary_type": "technical",
+    "allowed_evidence": [
+      "Synthetic function duration reached the configured timeout",
+      "Three synthetic invocations timed out"
+    ],
+    "required_missing_information": [
+      "Synthetic trace details are unavailable"
+    ],
+    "allowed_probable_causes": [
+      "Slow downstream operation",
+      "Workload exceeded the configured execution window"
+    ],
+    "forbidden_claims": [
+      "The function memory setting caused the timeout",
+      "The timeout is permanently resolved"
+    ]
+  },
+  {
+    "case_id": "dynamodb-throttling-001",
+    "summary_type": "technical",
+    "allowed_evidence": [
+      "Synthetic DynamoDB throttled request count increased",
+      "Synthetic write demand exceeded the test baseline"
+    ],
+    "required_missing_information": [
+      "Synthetic partition distribution is unavailable"
+    ],
+    "allowed_probable_causes": [
+      "Uneven synthetic key distribution",
+      "Synthetic demand exceeded configured capacity"
+    ],
+    "forbidden_claims": [
+      "A production table was overloaded",
+      "Capacity was changed automatically"
+    ]
+  },
+  {
+    "case_id": "insufficient-alarm-001",
+    "summary_type": "technical",
+    "allowed_evidence": [
+      "A synthetic alarm changed state without metric details"
+    ],
+    "required_missing_information": [
+      "The triggering synthetic metric value is unavailable"
+    ],
+    "allowed_probable_causes": [
+      "Insufficient evidence for a probable cause"
+    ],
+    "forbidden_claims": [
+      "The alarm proves a service outage",
+      "The root cause is confirmed"
+    ]
+  },
+  {
+    "case_id": "executive-unconfirmed-001",
+    "summary_type": "executive",
+    "allowed_evidence": [
+      "A synthetic service degradation was observed for twelve minutes",
+      "The synthetic service recovered without operator action"
+    ],
+    "required_missing_information": [
+      "Business impact has not been measured for the synthetic scenario"
+    ],
+    "allowed_probable_causes": [
+      "Cause remains unconfirmed"
+    ],
+    "forbidden_claims": [
+      "Customers lost data",
+      "The incident had no business impact"
+    ]
+  }
+]
