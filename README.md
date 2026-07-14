@@ -8,6 +8,10 @@ Plataforma serverless para recibir, clasificar y gestionar incidencias de infrae
 
 > El laboratorio funciona en Docker y la demo pública usa datos simulados en GitHub Pages. La arquitectura AWS puede desplegarse de forma efímera y dispone de un perfil persistente opcional, pero no mantiene ningún stack activo por defecto.
 
+> **Estado de versión:** este repositorio se está preparando como candidato a
+> `v1.0.0-lab`. Es una **validated laboratory reference architecture** y está
+> **not production-ready**. La etiqueta y la GitHub Release todavía no existen.
+
 ## Demo pública
 
 ```text
@@ -231,7 +235,7 @@ Este contexto añade un cliente Cognito temporal de `client_credentials`, con sc
 - `SECURITY.md` y private vulnerability reporting recomendado.
 - SBOM SPDX JSON mediante workflow manual o sobre `main`.
 
-Guía: [seguridad operacional y supply chain](docs/operational-security-supply-chain.md).
+Guía: [seguridad operacional y supply chain](docs/p1-operational-security-supply-chain.md).
 
 ## Desarrollo y validación
 
@@ -299,6 +303,7 @@ Guía: [prueba AWS efímera y controlada](docs/aws-performance-test.md).
 
 ## Documentación principal
 
+- [Candidata v1.0.0-lab y runbook de release/rollback](docs/v1.0.0-lab-release-and-rollback.md)
 - [Observabilidad](docs/observability.md)
 - [Runbook de DLQ](docs/runbook-dlq.md)
 - [Objetivos RTO/RPO](docs/recovery-objectives.md)
@@ -318,14 +323,33 @@ Guía: [prueba AWS efímera y controlada](docs/aws-performance-test.md).
 
 ## Estado Well-Architected
 
-La referencia ya implementa autenticación, autorización, CORS, consultas sin Scan, métricas incrementales, PITR opcional, alarm routing opcional, throttling, supply-chain security, paginación, ownership y baselines local y AWS validados.
+### Controles implementados
+
+La referencia implementa autenticación, autorización, CORS, consultas sin Scan,
+métricas incrementales, PITR opcional expresado en IaC, alarm routing opcional,
+throttling, automatización de supply chain, paginación y ownership de laboratorio.
+
+### Evidencias validadas en laboratorio
+
+- Baselines controlados local y AWS con limpieza verificada.
+- Entrega real de transiciones `ALARM` y `OK` mediante CloudWatch, SNS, Amazon Q
+  Developer y Slack para WA-014.
+- AWS Budgets y Cost Anomaly Detection evidenciados para la cuenta de laboratorio.
+- Validate, CodeQL, guardrails y generación automatizada de un SBOM de repositorio.
+
+### Controles operacionales o de producción pendientes
 
 El workload continúa **sin declararse production-ready** hasta obtener evidencia real de:
 
-- Restore PITR y rollback.
+- Restore PITR y rollback ejercitados; PITR ya está expresado en IaC, pero no se
+  ha ejecutado un restore real.
+- Aprobación y ejercicio de los SLO y objetivos de ingeniería RTO/RPO.
 - Ownership organizativo de producción y cobertura on-call.
 - Cost allocation tags, unit economics y revisión financiera de producción.
-- Receptor real de alarmas.
+- Receptor organizativo de producción y cobertura on-call; el receptor de
+  laboratorio de WA-014 ya está validado.
+- SBOM SPDX JSON verificable vinculado al commit, tag y GitHub Release; el workflow
+  existe, pero ese artifact de release todavía no.
 - Tuning comparativo de Lambda, SQS y throttling cuando exista un objetivo
   de escala superior al baseline actual.
 - Game day y revisión Well-Architected posterior.
@@ -339,16 +363,21 @@ El workload continúa **sin declararse production-ready** hasta obtener evidenci
 - [x] Well-Architected y arquitectura multi-account.
 - [x] Cognito, scopes JWT y CORS restringido.
 - [x] DynamoDB Query y métricas incrementales sin Scan.
-- [x] PITR, RTO/RPO, SLO y alarm routing opcional.
+- [x] PITR y alarm routing opcionales expresados en IaC; objetivos de ingeniería RTO/RPO y SLO documentados.
 - [x] Ownership técnico y matriz RACI del laboratorio.
 - [x] AWS Budgets y Cost Anomaly Detection evidenciados en el laboratorio.
-- [x] Throttling, CodeQL, Dependabot, secretos y SBOM.
+- [x] Throttling, CodeQL, Dependabot, guardrail de secretos y workflow SBOM.
 - [x] Paginación por cursor y framework de pruebas de carga.
 - [x] Baseline local validado y versionado.
 - [x] Workflow AWS de rendimiento efímero y controlado preparado.
 - [x] Ejecutar el baseline AWS con aprobación, presupuesto y limpieza verificada.
 - [ ] Ajustar recursos únicamente a partir de evidencia AWS comparativa.
-- [ ] Obtener evidencias P1 reales de restore y alarmas.
+- [ ] Obtener evidencia P1 real de restore y routing operacional de producción.
+- [ ] WA-019: ejecutar y versionar la evidencia del game day.
+- [ ] WA-020: ejercer la creación de release y su rollback según el runbook.
+- [ ] WA-021: definir clasificación y retención de datos.
+- [ ] WA-022: asociar un SBOM verificable a la futura release.
+- [ ] WA-023: estimar el coste por 1.000 incidencias.
 
 ## Licencia
 

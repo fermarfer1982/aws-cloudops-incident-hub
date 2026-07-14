@@ -83,3 +83,12 @@ Trade-offs:
 ## Production gate
 
 This decision completes the reference implementation for WA-016. WA-017 and WA-018 remain open until a representative test is executed, evidence is reviewed and compute, concurrency, batching and throttling settings are justified by measurements.
+
+## Subsequent outcome
+
+[ADR-011](011-controlled-ephemeral-aws-performance-test.md) subsequently defined
+and executed the controlled ephemeral AWS baseline. WA-017 is complete for the
+controlled local and AWS laboratory baselines. The measured evidence supported
+retaining the current settings. WA-018 remains conditional on a real higher-scale
+traffic objective and a controlled tuning comparison; it is not closed by the
+short laboratory run.

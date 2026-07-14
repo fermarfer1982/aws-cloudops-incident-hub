@@ -121,7 +121,7 @@ def main() -> None:
             "ExclusiveStartKey",
             "read-only",
             "A validated local baseline was executed on 2026-07-10",
-            "WA-017 has local laboratory evidence",
+            "WA-017 is complete for the controlled local and AWS laboratory baselines",
         ),
     )
     require_tokens(

@@ -4,10 +4,10 @@
 
 - **Workload:** AWS CloudOps Incident Hub
 - **Review type:** Repository-based self-assessment
-- **Review date:** 2026-07-12
+- **Review date:** 2026-07-13
 - **Reviewer:** Fernando Martínez Fernández
 - **Framework:** AWS Well-Architected Framework, six pillars
-- **Environment assessed:** Local zero-cost laboratory plus one validated ephemeral AWS performance deployment
+- **Environment assessed:** Local zero-cost laboratory plus validated ephemeral AWS performance and WA-014 ChatOps deployments
 - **Production readiness:** Not production-ready
 
 > This document is a technical self-assessment, not an AWS Well-Architected Tool review and not an external audit. Findings are based on evidence versioned in this repository. A control marked as completed in the reference implementation still requires deployment evidence and operational validation before production use.
@@ -33,8 +33,8 @@ No persistent production traffic profile, RTO, RPO, SLO, compliance regime, data
 
 | Pillar | Current rating | Main strength | Main risk |
 |---|---|---|---|
-| Operational excellence | Medium | IaC, CI, runbooks, laboratory ownership and cleanup | No approved production SLO, on-call or alert-routing process |
-| Security | Medium for production reference | Cognito JWT scopes, OIDC federation, explicit CORS and least privilege | No abuse protection, data classification or supply-chain security baseline |
+| Operational excellence | Medium | IaC, CI, runbooks, laboratory ownership, validated laboratory alert routing and cleanup | No approved production SLO, on-call or organizational alert-routing process |
+| Security | Medium for production reference | Cognito JWT scopes, OIDC federation, explicit CORS, throttling and supply-chain automation | Data classification, broader abuse protection, operational triage and durable release evidence remain incomplete |
 | Reliability | Medium | EventBridge, SQS, DLQ, retries, idempotency and alarms | No approved RTO/RPO, restore test or regional recovery strategy |
 | Performance efficiency | Medium | Query pagination, incremental metrics, ARM64 and validated local/AWS baselines | No sustained-capacity test or comparative tuning |
 | Cost optimization | Low for laboratory / Medium for production | Ephemeral lifecycle, two budgets and anomaly detection evidence | No production unit economics, tag evidence or approved production budget |
@@ -42,7 +42,7 @@ No persistent production traffic profile, RTO, RPO, SLO, compliance regime, data
 
 ### Overall conclusion
 
-WA-001 through WA-005 are closed in the reference implementation: the cloud API is authenticated and scope-authorized, CORS is explicit, operational listings use DynamoDB Query and metrics are materialized transactionally. The workload remains **not production-ready** because approved production SLOs, organizational ownership and on-call coverage, tested restore, alarm routing, complete financial evidence, abuse protection and sustained-capacity evidence are still missing.
+WA-001 through WA-005 are closed in the reference implementation: the cloud API is authenticated and scope-authorized, CORS is explicit, operational listings use DynamoDB Query and metrics are materialized transactionally. WA-014 also validates real `ALARM` and `OK` delivery through SNS, Amazon Q Developer and Slack for the laboratory. This is a **validated laboratory reference architecture**, but it remains **not production-ready** because approved production SLOs, organizational ownership and on-call coverage, tested restore, organizational alert routing, durable release evidence, data governance, broader abuse protection and sustained-capacity evidence are still missing.
 
 ---
 
@@ -56,6 +56,8 @@ WA-001 through WA-005 are closed in the reference implementation: the cloud API 
 - CloudWatch dashboards, alarms, runbooks, ADRs and temporary evidence are versioned.
 - A named laboratory workload owner, role assignments, decision rights, escalation
   model and RACI matrix are versioned in `docs/workload-ownership.md`.
+- WA-014 records real `ALARM` and `OK` delivery to an authorized laboratory Slack
+  channel and verified removal of the ephemeral stack.
 
 ## Risks and gaps
 
@@ -63,17 +65,17 @@ WA-001 through WA-005 are closed in the reference implementation: the cloud API 
 |---|---|---|---|
 | OPS-01 | No approved service owner, escalation path or on-call responsibility | High | Closed for laboratory ownership; production roles and on-call remain open |
 | OPS-02 | No SLO, error budget, availability target or latency objective | High | Open |
-| OPS-03 | Alarms have no notification or incident-management destination | Medium | Accepted for laboratory |
+| OPS-03 | Alarm routing and responder integration | Medium | Closed for laboratory routing by WA-014; production on-call, ownership and organizational receiver remain open |
 | OPS-04 | No game-day or failure-injection evidence | Medium | Open |
-| OPS-05 | No formal release and rollback decision procedure | Medium | Open |
+| OPS-05 | Release and rollback procedure has not been exercised | Medium | Runbook documented for WA-020; release creation and rollback remain unexercised |
 
 ## Recommended actions
 
-Assign organizational production owners, approve measurable SLOs, route alarms to an approved channel, execute game days and document release/rollback criteria.
+Assign organizational production owners, approve measurable SLOs, connect alarms to an approved production receiver and on-call process, execute game days, and exercise the documented release/rollback criteria.
 
 ## Pillar rating
 
-**Medium risk.** Laboratory accountability is defined, but production ownership, on-call coverage, approved outcomes and alert routing remain incomplete.
+**Medium risk.** Laboratory accountability and alert routing are validated, but production ownership, on-call coverage, approved outcomes and organizational alert routing remain incomplete.
 
 ---
 
@@ -87,6 +89,9 @@ Assign organizational production owners, approve measurable SLOs, route alarms t
 - Only `GET /health` is public in AWS.
 - CORS uses an explicit allowlist.
 - DynamoDB and SQS use managed encryption, and Lambda policies exclude `dynamodb:Scan`.
+- API Gateway has explicit throttling validated by a conservative laboratory baseline.
+- Dependabot, CodeQL, a repository secret-pattern guardrail and an SPDX JSON SBOM
+  workflow are implemented.
 
 ## Risks and gaps
 
@@ -96,13 +101,13 @@ Assign organizational production owners, approve measurable SLOs, route alarms t
 | SEC-02 | CORS allows every origin | High | Closed in reference implementation |
 | SEC-03 | WAF decision and abuse protection remain incomplete | High | Throttling defined and validated at 5 requests/s; broader protection open |
 | SEC-04 | No formal data classification, retention policy or privacy assessment | High | Open |
-| SEC-05 | No dependency vulnerability scanning, secret scanning policy or SBOM | Medium | Open |
+| SEC-05 | Supply-chain controls lack complete operational and release evidence | Medium | CodeQL, Dependabot, the secret guardrail and SBOM workflow are implemented; repository settings, triage and durable release-bound SBOM evidence remain partial |
 | SEC-06 | Effective CDK bootstrap-role permissions require separate review | Medium | Open |
 | SEC-07 | Central CloudTrail, GuardDuty and Security Hub remain target-state controls | Medium | Deferred to landing zone implementation |
 
 ## Recommended actions
 
-Validate federation and client separation in the target environment, add throttling and abuse controls, define data governance, and establish dependency, code, secret and SBOM controls.
+Validate federation and client separation in the target environment, validate broader abuse controls, define data governance, confirm repository security settings and triage, and bind a verified SBOM to the future release.
 
 ## Pillar rating
 
@@ -120,26 +125,30 @@ Validate federation and client separation in the target environment, add throttl
 - Conditional writes and deterministic identifiers provide idempotency.
 - Transactional counters keep incident and metric changes consistent.
 - Queue-age, Lambda-error and DLQ alarms are defined.
+- RTO and RPO are documented as engineering targets for a future persistent
+  environment, and optional PITR is expressed in IaC.
+- WA-014 validates real laboratory `ALARM` and `OK` delivery through the optional
+  ChatOps path.
 
 ## Risks and gaps
 
 | ID | Risk | Severity | Status |
 |---|---|---|---|
-| REL-01 | RTO and RPO are undefined | High | Open |
+| REL-01 | RTO and RPO lack approval and exercise evidence | High | Engineering targets are defined; organizational approval and a recovery exercise remain open |
 | REL-02 | DynamoDB PITR and backup policy are not enabled | High | Accepted for ephemeral laboratory only |
 | REL-03 | Restore procedures have not been tested | High | Open |
 | REL-04 | Architecture is single-region with no approved recovery strategy | Medium | Open |
 | REL-05 | Client timeout, retry and backoff behavior are not documented | Medium | Open |
 | REL-06 | Poison-message and redrive integration evidence is incomplete | Medium | Open |
-| REL-07 | Alarm notifications are not routed to responders | Medium | Accepted for laboratory |
+| REL-07 | Alarm notifications lack a production responder path | Medium | Real `ALARM`/`OK` delivery validated for WA-014 laboratory routing; production receiver and on-call process remain open |
 
 ## Recommended actions
 
-Define RTO/RPO, enable PITR for persistent environments, test restore and regional recovery, and execute failure scenarios with real notification paths.
+Approve the proposed RTO/RPO, enable PITR for persistent environments, test restore and regional recovery, and execute failure scenarios with the production responder path.
 
 ## Pillar rating
 
-**Medium risk.** Failure isolation is strong, but business recovery objectives and restore evidence are absent.
+**Medium risk.** Failure isolation and laboratory notification delivery are strong, but recovery objectives are not approved and restore evidence is absent.
 
 ---
 
@@ -250,10 +259,10 @@ Measure useful work per Lambda invocation and GB-second, define retention by bus
 
 1. **SEC-01 / SEC-02:** Closed in reference; validate Cognito federation, scopes and CORS in the target environment.
 2. **PERF-01 / PERF-02 / PERF-03 / PERF-06:** Closed for the controlled reference baseline; repeat only for a higher production traffic objective.
-3. **REL-01 / REL-02 / REL-03:** Define RTO/RPO, enable recovery controls and test restore.
+3. **REL-01 / REL-02 / REL-03:** Approve the proposed RTO/RPO, enable recovery controls and test restore.
 4. **OPS-01 / OPS-02:** Assign ownership and approve SLOs.
-5. **COST-01:** Configure account-level financial controls.
-6. **SEC-03 / SEC-04 / SEC-05:** Add abuse protection, data governance and supply-chain security.
+5. **COST-01:** Laboratory financial controls are evidenced; approve production budgets, tagging and unit economics.
+6. **SEC-03 / SEC-04 / SEC-05:** Validate broader abuse protection, define data governance, confirm operational security settings and triage, and publish durable release-bound SBOM evidence.
 
 ## Accepted laboratory risks
 
@@ -263,7 +272,8 @@ The following choices are acceptable only because this is a short-lived portfoli
 - DynamoDB tables are deleted with the ephemeral stack.
 - No point-in-time recovery.
 - One-day log retention.
-- No alarm notification actions.
+- No alarm notification actions in the default ephemeral profile; the separately
+  enabled WA-014 ChatOps profile has validated laboratory delivery.
 - Conservative SQS event-source maximum concurrency of two.
 - The 30-second, 5 requests/s baseline does not prove sustained or peak production capacity.
 
@@ -285,6 +295,11 @@ Repeat this review before real users or data, after identity or recovery changes
 - `docs/workload-ownership.md`
 - `docs/aws-cost-governance-evidence-2026-07-12.md`
 - `docs/evidence/aws-cost-governance-2026-07-12.json`
+- `docs/wa-014-chatops-evidence-2026-07-13.md`
+- `docs/evidence/wa-014/`
+- `docs/p1-operational-security-supply-chain.md`
+- `.github/workflows/sbom.yml`
+- `docs/adr/012-amazon-q-slack-chatops.md`
 - `scripts/check_p0_controls.py`
 - `docs/p0-production-controls.md`
 - `docs/observability.md`
