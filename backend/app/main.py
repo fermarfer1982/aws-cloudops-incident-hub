@@ -3,12 +3,26 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
 
 from .config import settings
+from .genai.client import DisabledBedrockClient, FakeBedrockClient
+from .genai.service import (
+    AiSummaryContextTooLargeError,
+    AiSummaryDisabledError,
+    AiSummaryGroundingError,
+    AiSummaryIncidentNotFoundError,
+    AiSummaryInvalidIncidentIdError,
+    AiSummaryProviderUnavailableError,
+    AiSummaryResponseError,
+    AiSummaryTimeoutError,
+    IncidentSummaryService,
+)
 from .models import (
+    AiSummaryRequest,
+    AiSummaryResponse,
     EventAccepted,
     EventCreate,
     Incident,
@@ -29,6 +43,12 @@ logging.basicConfig(
 repository = PaginatedIncidentRepository()
 publisher = EventPublisher() if settings.event_bus_name else None
 service = IncidentService(repository, publisher=publisher)
+ai_summary_client = (
+    FakeBedrockClient()
+    if settings.ai_summary_enabled and settings.ai_summary_provider == "fake"
+    else DisabledBedrockClient()
+)
+ai_summary_service = IncidentSummaryService(repository, ai_summary_client, settings)
 
 
 @asynccontextmanager
@@ -59,6 +79,10 @@ app.add_middleware(
 
 def get_service() -> IncidentService:
     return service
+
+
+def get_ai_summary_service() -> IncidentSummaryService:
+    return ai_summary_service
 
 
 @app.get("/health")
@@ -128,6 +152,31 @@ def update_event_status(
 @app.get("/metrics", response_model=Metrics)
 def get_metrics(incident_service: IncidentService = Depends(get_service)) -> dict:
     return incident_service.metrics()
+
+
+@app.post(
+    "/incidents/{incident_id}/ai-summary",
+    response_model=AiSummaryResponse,
+)
+def create_ai_summary(
+    incident_id: str,
+    request: AiSummaryRequest | None = Body(default=None),
+    summary_service: IncidentSummaryService = Depends(get_ai_summary_service),
+) -> AiSummaryResponse:
+    try:
+        return summary_service.summarize(incident_id, request or AiSummaryRequest())
+    except AiSummaryIncidentNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Incident not found") from exc
+    except AiSummaryContextTooLargeError as exc:
+        raise HTTPException(status_code=413, detail="Incident context is too large") from exc
+    except (AiSummaryResponseError, AiSummaryGroundingError) as exc:
+        raise HTTPException(status_code=502, detail="AI summary response is invalid") from exc
+    except (AiSummaryDisabledError, AiSummaryProviderUnavailableError) as exc:
+        raise HTTPException(status_code=503, detail="AI summary service is unavailable") from exc
+    except AiSummaryTimeoutError as exc:
+        raise HTTPException(status_code=504, detail="AI summary provider timed out") from exc
+    except AiSummaryInvalidIncidentIdError as exc:
+        raise HTTPException(status_code=422, detail="Invalid incident identifier") from exc
 
 
 handler = Mangum(app, lifespan="off")
