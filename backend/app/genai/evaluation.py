@@ -9,6 +9,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictInt,
     ValidationError,
     field_validator,
     model_validator,
@@ -166,8 +167,9 @@ class EvaluationReport(StrictModel):
     passed_cases: int = Field(ge=0, strict=True)
     failed_cases: int = Field(ge=0, strict=True)
     total_findings: int = Field(ge=0, strict=True)
-    findings_by_code: dict[str, int]
+    findings_by_code: dict[str, StrictInt]
     unexpected_predictions: tuple[str, ...]
+    coverage_findings: tuple[EvaluationFinding, ...]
     results: tuple[EvaluationCaseResult, ...]
 
     @model_validator(mode="after")
@@ -176,8 +178,18 @@ class EvaluationReport(StrictModel):
             raise ValueError("passed_cases + failed_cases must equal total_cases")
         if len(self.results) != self.total_cases:
             raise ValueError("results length must equal total_cases")
-        if sum(len(result.findings) for result in self.results) != self.total_findings:
+        all_findings = tuple(
+            finding for result in self.results for finding in result.findings
+        ) + self.coverage_findings
+        if len(all_findings) != self.total_findings:
             raise ValueError("total_findings must equal the findings in results")
+        expected_counts = dict(
+            sorted(Counter(finding.code for finding in all_findings).items())
+        )
+        if any(type(value) is not int or value <= 0 for value in self.findings_by_code.values()):
+            raise ValueError("findings_by_code values must be positive integers")
+        if self.findings_by_code != expected_counts:
+            raise ValueError("findings_by_code must match all report findings")
         return self
 
 
@@ -332,13 +344,26 @@ def evaluate_predictions(
     prediction_by_id = {prediction.case_id: prediction for prediction in predictions}
     case_ids = {case.case_id for case in cases}
     unexpected = tuple(sorted(set(prediction_by_id) - case_ids))
+    coverage_findings = tuple(
+        _finding(
+            PREDICTION_UNEXPECTED,
+            "predictions",
+            "Unexpected prediction identifier",
+            item_index,
+        )
+        for item_index, _ in enumerate(unexpected)
+    )
     results = tuple(
         _evaluate_case(case, prediction_by_id.get(case.case_id))
         for case in sorted(cases, key=lambda item: item.case_id)
     )
     passed = sum(result.passed for result in results)
     finding_counts = Counter(
-        finding.code for result in results for finding in result.findings
+        finding.code
+        for finding in (
+            tuple(finding for result in results for finding in result.findings)
+            + coverage_findings
+        )
     )
     total_findings = sum(finding_counts.values())
     return EvaluationReport(
@@ -350,6 +375,7 @@ def evaluate_predictions(
         total_findings=total_findings,
         findings_by_code=dict(sorted(finding_counts.items())),
         unexpected_predictions=unexpected,
+        coverage_findings=coverage_findings,
         results=results,
     )
 

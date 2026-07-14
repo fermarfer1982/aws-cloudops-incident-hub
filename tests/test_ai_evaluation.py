@@ -15,8 +15,10 @@ from app.genai.evaluation import (
     FORBIDDEN_CLAIM_PRESENT,
     PREDICTION_MISSING,
     PREDICTION_SCHEMA_INVALID,
+    PREDICTION_UNEXPECTED,
     REQUIRED_MISSING_INFORMATION_ABSENT,
     EvaluationInputError,
+    EvaluationReport,
     EvaluationSummary,
     evaluate_predictions,
     load_dataset,
@@ -157,7 +159,54 @@ def test_unexpected_prediction_is_reported_without_adding_a_case():
     unexpected = predictions[0].model_copy(update={"case_id": "unexpected-case"})
     report = evaluate_predictions(cases, predictions + (unexpected,))
     assert report.total_cases == 1
+    assert report.passed_cases == 1
+    assert report.failed_cases == 0
     assert report.unexpected_predictions == ("unexpected-case",)
+    assert len(report.results) == 1
+    assert report.results[0].findings == ()
+    assert report.total_findings == 1
+    assert report.findings_by_code == {PREDICTION_UNEXPECTED: 1}
+    assert len(report.coverage_findings) == 1
+    finding = report.coverage_findings[0]
+    assert finding.code == PREDICTION_UNEXPECTED
+    assert finding.field == "predictions"
+    assert finding.item_index == 0
+    assert finding.message == "Unexpected prediction identifier"
+    assert "unexpected-case" not in finding.message
+    assert predictions[0].prediction["summary"] not in report_json(report)
+
+
+def test_unexpected_predictions_are_sorted_with_deterministic_findings():
+    cases, predictions = one_case_inputs()
+    unexpected_a = predictions[0].model_copy(update={"case_id": "unexpected-a"})
+    unexpected_b = predictions[0].model_copy(update={"case_id": "unexpected-b"})
+    first = evaluate_predictions(cases, predictions + (unexpected_b, unexpected_a))
+    second = evaluate_predictions(cases, predictions + (unexpected_a, unexpected_b))
+    assert first.unexpected_predictions == ("unexpected-a", "unexpected-b")
+    assert [finding.item_index for finding in first.coverage_findings] == [0, 1]
+    assert [finding.code for finding in first.coverage_findings] == [
+        PREDICTION_UNEXPECTED,
+        PREDICTION_UNEXPECTED,
+    ]
+    assert first.findings_by_code == {PREDICTION_UNEXPECTED: 2}
+    assert first.total_findings == 2
+    assert report_json(first) == report_json(second)
+
+
+def test_missing_and_unexpected_predictions_count_case_and_global_findings():
+    cases, predictions = one_case_inputs()
+    unexpected = predictions[0].model_copy(update={"case_id": "unexpected-case"})
+    report = evaluate_predictions(cases, (unexpected,))
+    assert report.failed_cases == 1
+    assert report.total_findings == 2
+    assert report.findings_by_code == {
+        PREDICTION_MISSING: 1,
+        PREDICTION_UNEXPECTED: 1,
+    }
+    assert finding_codes(report) == [PREDICTION_MISSING]
+    assert [finding.code for finding in report.coverage_findings] == [
+        PREDICTION_UNEXPECTED
+    ]
 
 
 @pytest.mark.parametrize(
@@ -341,7 +390,7 @@ def test_report_counts_invariants_order_and_determinism():
     assert report.passed_cases + report.failed_cases == report.total_cases
     assert report.total_findings == sum(
         len(result.findings) for result in report.results
-    )
+    ) + len(report.coverage_findings)
     assert [result.case_id for result in report.results] == sorted(
         result.case_id for result in report.results
     )
@@ -359,6 +408,60 @@ def test_summary_rejects_inconsistent_totals_and_boolean_integers():
         EvaluationSummary(
             total_cases=True, passed_cases=1, failed_cases=0, total_findings=0
         )
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"total_findings": 1},
+        {"findings_by_code": {PREDICTION_UNEXPECTED: 1}},
+        {"findings_by_code": {"EXTRA_CODE": 1}},
+        {"findings_by_code": {PREDICTION_MISSING: 1}},
+        {"findings_by_code": {PREDICTION_UNEXPECTED: True}},
+        {"findings_by_code": {PREDICTION_UNEXPECTED: -1}},
+        {"findings_by_code": {PREDICTION_UNEXPECTED: 0}},
+    ],
+    ids=[
+        "total",
+        "code-without-finding",
+        "additional-code",
+        "wrong-code",
+        "boolean-count",
+        "negative-count",
+        "zero-count",
+    ],
+)
+def test_report_rejects_inconsistent_finding_invariants(updates):
+    cases, predictions = one_case_inputs()
+    report = evaluate_predictions(cases, predictions)
+    raw = report.model_dump(mode="python")
+    raw.update(updates)
+    with pytest.raises(ValueError):
+        EvaluationReport.model_validate(raw)
+
+
+@pytest.mark.parametrize(
+    "counts",
+    [{}, {PREDICTION_UNEXPECTED: 2}],
+    ids=["missing-actual-code", "incorrect-actual-count"],
+)
+def test_report_rejects_missing_or_incorrect_actual_coverage_code(counts):
+    cases, predictions = one_case_inputs()
+    unexpected = predictions[0].model_copy(update={"case_id": "unexpected-case"})
+    report = evaluate_predictions(cases, predictions + (unexpected,))
+    raw = report.model_dump(mode="python")
+    raw["findings_by_code"] = counts
+    with pytest.raises(ValueError):
+        EvaluationReport.model_validate(raw)
+
+
+def test_positive_report_has_no_global_findings():
+    cases, predictions = load_positive()
+    report = evaluate_predictions(cases, predictions)
+    assert report.total_findings == 0
+    assert report.findings_by_code == {}
+    assert report.coverage_findings == ()
+    assert report.unexpected_predictions == ()
 
 
 def test_report_excludes_predictions_and_full_evidence():
@@ -397,6 +500,28 @@ def test_cli_exit_one_for_completed_evaluation_with_failures(tmp_path):
     assert cli_main(
         ["--dataset", str(DATASET), "--predictions", str(predictions), "--output", str(output)]
     ) == 1
+
+
+def test_cli_exit_one_and_reports_an_unexpected_prediction(tmp_path, capsys):
+    raw = read_json(PREDICTIONS)
+    unexpected_payload = deepcopy(raw[0])
+    unexpected_payload["case_id"] = "unexpected-case"
+    unexpected_payload["prediction"]["summary"] = "Private unexpected payload"
+    raw.append(unexpected_payload)
+    predictions = write_json(tmp_path / "predictions.json", raw)
+    output = tmp_path / "report.json"
+    assert cli_main(
+        ["--dataset", str(DATASET), "--predictions", str(predictions), "--output", str(output)]
+    ) == 1
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["total_cases"] == 6
+    assert report["failed_cases"] == 0
+    assert report["total_findings"] == 1
+    assert report["findings_by_code"] == {PREDICTION_UNEXPECTED: 1}
+    assert report["coverage_findings"][0]["code"] == PREDICTION_UNEXPECTED
+    serialized = output.read_text(encoding="utf-8")
+    assert "Private unexpected payload" not in serialized
+    assert "Private unexpected payload" not in capsys.readouterr().out
 
 
 def test_cli_exit_two_for_invalid_input(tmp_path, capsys):
