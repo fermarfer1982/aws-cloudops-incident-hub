@@ -2,13 +2,20 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from functools import lru_cache
 
+import boto3
+from botocore.config import Config
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
 
 from .config import settings
-from .genai.client import DisabledBedrockClient, FakeBedrockClient
+from .genai.client import (
+    BedrockConverseClient,
+    DisabledBedrockClient,
+    FakeBedrockClient,
+)
 from .genai.service import (
     AiSummaryContextTooLargeError,
     AiSummaryDisabledError,
@@ -43,12 +50,30 @@ logging.basicConfig(
 repository = PaginatedIncidentRepository()
 publisher = EventPublisher() if settings.event_bus_name else None
 service = IncidentService(repository, publisher=publisher)
-ai_summary_client = (
-    FakeBedrockClient()
-    if settings.ai_summary_enabled and settings.ai_summary_provider == "fake"
-    else DisabledBedrockClient()
-)
-ai_summary_service = IncidentSummaryService(repository, ai_summary_client, settings)
+
+
+def build_ai_summary_client():
+    if not settings.ai_summary_enabled or settings.ai_summary_provider == "disabled":
+        return DisabledBedrockClient()
+    if settings.ai_summary_provider == "fake":
+        return FakeBedrockClient()
+    runtime_client = boto3.client(
+        "bedrock-runtime",
+        region_name=settings.aws_region,
+        config=Config(
+            connect_timeout=settings.ai_summary_connect_timeout_seconds,
+            read_timeout=settings.ai_summary_read_timeout_seconds,
+            retries={
+                "total_max_attempts": settings.ai_summary_max_attempts,
+                "mode": "standard",
+            },
+        ),
+    )
+    return BedrockConverseClient(
+        runtime_client,
+        max_tokens=settings.ai_summary_max_tokens,
+        temperature=settings.ai_summary_temperature,
+    )
 
 
 @asynccontextmanager
@@ -81,8 +106,9 @@ def get_service() -> IncidentService:
     return service
 
 
+@lru_cache
 def get_ai_summary_service() -> IncidentSummaryService:
-    return ai_summary_service
+    return IncidentSummaryService(repository, build_ai_summary_client(), settings)
 
 
 @app.get("/health")

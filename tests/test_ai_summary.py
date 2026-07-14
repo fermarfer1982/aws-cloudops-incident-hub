@@ -83,6 +83,7 @@ class StaticClient:
             text=text,
             input_tokens=10,
             output_tokens=5,
+            total_tokens=15,
             latency_ms=2,
             model_id=self.model_id,
         )
@@ -123,6 +124,71 @@ def test_settings_rejects_invalid_boolean_environment(monkeypatch):
     monkeypatch.setenv("AI_SUMMARY_ENABLED", "sometimes")
     with pytest.raises(ValueError, match="AI_SUMMARY_ENABLED must be one of"):
         Settings()
+
+
+@pytest.mark.parametrize("provider", ["unknown", "BEDROCK", "fake "])
+def test_settings_rejects_unknown_provider(provider):
+    with pytest.raises(ValueError, match="AI_SUMMARY_PROVIDER"):
+        make_settings(ai_summary_provider=provider)
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"ai_summary_max_tokens": 0}, "AI_SUMMARY_MAX_TOKENS"),
+        ({"ai_summary_temperature": -0.1}, "AI_SUMMARY_TEMPERATURE"),
+        ({"ai_summary_temperature": 1.1}, "AI_SUMMARY_TEMPERATURE"),
+        ({"ai_summary_connect_timeout_seconds": 0}, "CONNECT_TIMEOUT"),
+        ({"ai_summary_read_timeout_seconds": 0}, "READ_TIMEOUT"),
+        ({"ai_summary_max_attempts": 0}, "MAX_ATTEMPTS"),
+        ({"ai_summary_max_attempts": 6}, "MAX_ATTEMPTS"),
+    ],
+)
+def test_settings_rejects_invalid_bedrock_limits(changes, message):
+    with pytest.raises(ValueError, match=message):
+        make_settings(**changes)
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"ai_summary_enabled": False}, "AI_SUMMARY_ENABLED"),
+        ({"ai_summary_model_id": ""}, "AI_SUMMARY_MODEL_ID is required"),
+        ({"ai_summary_model_id": "fake-local-model"}, "must not be fake-local-model"),
+        (
+            {
+                "ai_summary_model_id": "approved-model-placeholder",
+                "ai_summary_allowed_model_ids": (),
+            },
+            "AI_SUMMARY_ALLOWED_MODEL_IDS",
+        ),
+        (
+            {
+                "ai_summary_model_id": "unapproved-model-placeholder",
+                "ai_summary_allowed_model_ids": ("approved-model-placeholder",),
+            },
+            "must be explicitly allowed",
+        ),
+    ],
+)
+def test_bedrock_provider_fails_closed_for_invalid_configuration(changes, message):
+    values = {
+        "ai_summary_provider": "bedrock",
+        "ai_summary_model_id": "approved-model-placeholder",
+        "ai_summary_allowed_model_ids": ("approved-model-placeholder",),
+    }
+    values.update(changes)
+    with pytest.raises(ValueError, match=message):
+        make_settings(**values)
+
+
+def test_bedrock_provider_accepts_exact_allowlist_match():
+    configured = make_settings(
+        ai_summary_provider="bedrock",
+        ai_summary_model_id="approved-model-placeholder",
+        ai_summary_allowed_model_ids=("other-placeholder", "approved-model-placeholder"),
+    )
+    assert configured.ai_summary_provider == "bedrock"
 
 
 def test_request_defaults_and_valid_summary_types():

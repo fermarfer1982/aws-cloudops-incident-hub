@@ -304,11 +304,13 @@ Guía: [prueba AWS efímera y controlada](docs/aws-performance-test.md).
 ## Generative AI roadmap
 
 AWS CloudOps Incident Copilot dispone de un núcleo local de MVP, estrictamente de
-solo lectura, basado en `FakeBedrockClient`. La salida fake es determinista y **no
-procede de un modelo fundacional ni de una inferencia real**. No existe integración
-con Amazon Bedrock, ruta desplegada en API Gateway ni remediación automática. La
-feature está desactivada por defecto, [ADR-013](docs/adr/013-amazon-bedrock-incident-copilot.md)
-permanece **Proposed** y el proyecto continúa **not production-ready**.
+solo lectura. Incluye un adaptador testeable para Amazon Bedrock Converse API, pero
+no hay modelo aprobado, acceso concedido, infraestructura, ruta desplegada ni
+evidencia de inferencia real. `FakeBedrockClient` sigue produciendo una salida
+determinista que **no procede de un modelo fundacional ni de una inferencia real**.
+La feature y el proveedor real están desactivados por defecto,
+[ADR-013](docs/adr/013-amazon-bedrock-incident-copilot.md) permanece **Proposed** y
+el proyecto continúa **not production-ready**.
 
 El modo local actual no usa Cognito y solo debe ejecutarse en una red de laboratorio
 confiable y con datos sintéticos. Una futura exposición AWS deberá crear una ruta de

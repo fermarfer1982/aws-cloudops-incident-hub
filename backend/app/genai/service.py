@@ -17,6 +17,7 @@ from app.models import (
 
 from .client import (
     BedrockClient,
+    BedrockClientResponseError,
     BedrockClientUnavailableError,
     BedrockRequest,
 )
@@ -150,6 +151,8 @@ class IncidentSummaryService:
             result = self._client.converse(provider_request)
         except BedrockClientUnavailableError as exc:
             raise AiSummaryProviderUnavailableError("AI summary provider is unavailable") from exc
+        except BedrockClientResponseError as exc:
+            raise AiSummaryResponseError("AI summary response is invalid") from exc
         except TimeoutError as exc:
             raise AiSummaryTimeoutError("AI summary provider timed out") from exc
 
@@ -173,6 +176,7 @@ class IncidentSummaryService:
         )
         input_tokens = max(result.input_tokens, 0)
         output_tokens = max(result.output_tokens, 0)
+        total_tokens = max(result.total_tokens, 0)
         return AiSummaryResponse(
             incident_id=incident_id,
             summary_type=request.summary_type,
@@ -188,7 +192,7 @@ class IncidentSummaryService:
             usage=AiUsage(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
-                total_tokens=input_tokens + output_tokens,
+                total_tokens=total_tokens,
             ),
             latency_ms=max(result.latency_ms, 0),
         )
