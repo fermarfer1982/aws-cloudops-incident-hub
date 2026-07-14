@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -138,11 +139,30 @@ class BedrockConverseClient:
 
         try:
             content = response["output"]["message"]["content"]
-            text_blocks = [
-                block["text"]
-                for block in content
-                if isinstance(block, dict) and isinstance(block.get("text"), str)
-            ]
+        except (KeyError, TypeError) as exc:
+            raise BedrockClientResponseError(
+                "Amazon Bedrock Runtime returned an invalid response"
+            ) from exc
+
+        if not isinstance(content, list) or not content:
+            raise BedrockClientResponseError(
+                "Amazon Bedrock Runtime returned an invalid response"
+            )
+
+        text_blocks: list[str] = []
+        for block in content:
+            if (
+                not isinstance(block, Mapping)
+                or set(block.keys()) != {"text"}
+                or not isinstance(block["text"], str)
+                or not block["text"].strip()
+            ):
+                raise BedrockClientResponseError(
+                    "Amazon Bedrock Runtime returned an invalid response"
+                )
+            text_blocks.append(block["text"])
+
+        try:
             usage = response["usage"]
             input_tokens = usage["inputTokens"]
             output_tokens = usage["outputTokens"]
@@ -154,7 +174,7 @@ class BedrockConverseClient:
                 "Amazon Bedrock Runtime returned an invalid response"
             ) from exc
 
-        if not text_blocks or not all(
+        if not all(
             type(value) is int and value >= 0
             for value in (input_tokens, output_tokens, total_tokens, latency_ms)
         ):
@@ -165,11 +185,6 @@ class BedrockConverseClient:
             raise BedrockClientResponseError(
                 "Amazon Bedrock Runtime returned an invalid response"
             )
-        if any(not block for block in text_blocks):
-            raise BedrockClientResponseError(
-                "Amazon Bedrock Runtime returned an invalid response"
-            )
-
         return BedrockResult(
             text="".join(text_blocks),
             input_tokens=input_tokens,

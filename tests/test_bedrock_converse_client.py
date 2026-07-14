@@ -50,6 +50,12 @@ def valid_response() -> dict[str, Any]:
     }
 
 
+def response_with_content(content: Any) -> dict[str, Any]:
+    response = valid_response()
+    response["output"]["message"]["content"] = content
+    return response
+
+
 def test_converse_maps_the_request_and_response_without_network():
     runtime = StubRuntimeClient(valid_response())
     client = BedrockConverseClient(
@@ -74,6 +80,141 @@ def test_converse_maps_the_request_and_response_without_network():
     assert result.total_tokens == 19
     assert result.latency_ms == 999
     assert result.model_id == "approved-model-placeholder"
+
+
+def test_converse_accepts_one_valid_text_block():
+    client = BedrockConverseClient(
+        StubRuntimeClient(response_with_content([{"text": "one"}])),
+        max_tokens=800,
+        temperature=0.0,
+    )
+    assert client.converse(request()).text == "one"
+
+
+def test_converse_concatenates_valid_text_blocks_in_order_without_separators():
+    client = BedrockConverseClient(
+        StubRuntimeClient(
+            response_with_content(
+                [{"text": "first"}, {"text": "second"}, {"text": "third"}]
+            )
+        ),
+        max_tokens=800,
+        temperature=0.0,
+    )
+    assert client.converse(request()).text == "firstsecondthird"
+
+
+def test_converse_rejects_missing_content_with_valid_metadata():
+    response = valid_response()
+    del response["output"]["message"]["content"]
+    client = BedrockConverseClient(
+        StubRuntimeClient(response), max_tokens=800, temperature=0.0
+    )
+    with pytest.raises(BedrockClientResponseError):
+        client.converse(request())
+
+
+@pytest.mark.parametrize(
+    "content",
+    [None, "text", {"text": "text"}, ({"text": "text"},), []],
+    ids=["none", "string", "mapping", "tuple", "empty"],
+)
+def test_converse_rejects_content_that_is_not_a_non_empty_list(content):
+    client = BedrockConverseClient(
+        StubRuntimeClient(response_with_content(content)),
+        max_tokens=800,
+        temperature=0.0,
+    )
+    with pytest.raises(BedrockClientResponseError):
+        client.converse(request())
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        {},
+        "text",
+        123,
+        None,
+        [],
+        {"toolUse": {"name": "unexpected"}},
+        {"image": {"format": "png"}},
+        {"document": {"name": "unexpected"}},
+        {"reasoningContent": {"text": "unexpected"}},
+        {"unknown": "value"},
+        {"text": "valid", "toolUse": {"name": "unexpected"}},
+        {"text": "valid", "extra": "unexpected"},
+        {"text": None},
+        {"text": 123},
+        {"text": True},
+        {"text": ""},
+        {"text": "   "},
+    ],
+    ids=[
+        "empty-mapping",
+        "string",
+        "integer",
+        "none",
+        "list",
+        "tool-use",
+        "image",
+        "document",
+        "reasoning-content",
+        "unknown-field",
+        "text-and-tool-use",
+        "text-and-extra-key",
+        "text-none",
+        "text-integer",
+        "text-boolean",
+        "text-empty",
+        "text-whitespace",
+    ],
+)
+def test_converse_rejects_every_invalid_content_block(block):
+    client = BedrockConverseClient(
+        StubRuntimeClient(response_with_content([block])),
+        max_tokens=800,
+        temperature=0.0,
+    )
+    with pytest.raises(BedrockClientResponseError):
+        client.converse(request())
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        [{"text": "safe-prefix"}, {"toolUse": {"name": "unexpected"}}],
+        [{"toolUse": {"name": "unexpected"}}, {"text": "safe-suffix"}],
+        [{"text": "safe-prefix"}, {"image": {"format": "png"}}],
+        [
+            {"text": "first"},
+            {"text": "second"},
+            {"document": {"name": "unexpected"}},
+            {"text": "third"},
+        ],
+        [{"text": "first"}, {"text": "second"}, {"unknown": "final"}],
+    ],
+    ids=[
+        "text-then-tool-use",
+        "tool-use-then-text",
+        "text-then-image",
+        "invalid-middle",
+        "invalid-final",
+    ],
+)
+def test_converse_rejects_mixed_content_without_returning_partial_text(content):
+    client = BedrockConverseClient(
+        StubRuntimeClient(response_with_content(content)),
+        max_tokens=800,
+        temperature=0.0,
+    )
+    with pytest.raises(BedrockClientResponseError) as captured:
+        client.converse(request())
+    assert str(captured.value) == "Amazon Bedrock Runtime returned an invalid response"
+    assert "first" not in str(captured.value)
+    assert "safe" not in str(captured.value)
+    assert "toolUse" not in str(captured.value)
+    assert "unexpected" not in str(captured.value)
 
 
 @pytest.mark.parametrize(
