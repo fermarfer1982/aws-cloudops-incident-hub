@@ -5,9 +5,10 @@
 AWS CloudOps Incident Copilot es una evolución propuesta de AWS CloudOps Incident
 Hub para transformar el contexto acotado de un incidente en un análisis
 estructurado, trazable y de solo lectura mediante Amazon Bedrock. Existe un núcleo
-local basado en un cliente fake, pero la integración Amazon Bedrock todavía no está
-implementada. La referencia continúa validada únicamente como laboratorio y no
-está preparada para producción.
+local y un adaptador de aplicación testeable para Converse API, pero no existe un
+modelo aprobado, acceso al modelo, infraestructura ni evidencia de inferencia real.
+La referencia continúa validada únicamente como laboratorio y no está preparada
+para producción.
 
 ## Implementation status
 
@@ -19,13 +20,13 @@ está preparada para producción.
 - Hechos observados y allowlist de evidencia construidos de forma determinista.
 - Validación de esquema, tamaño, campos conocidos y grounding.
 - `FakeBedrockClient` determinista y `DisabledBedrockClient` cerrado por defecto.
+- `BedrockConverseClient` con SDK inyectable, límites, timeouts y allowlist de modelo.
 - Endpoint FastAPI local con inyección de dependencias y errores estables.
 - Tests unitarios y de API sin red, AWS, credenciales ni sleeps.
 - Feature flag desactivada por defecto.
 
 ### Pendiente
 
-- `BedrockConverseClient` real y cliente boto3 `bedrock-runtime`.
 - Modelo o inference profile permitido e IAM de mínimo privilegio.
 - Lambda dedicada, API Gateway y scope Cognito de lectura.
 - Métricas custom de CloudWatch y Amazon Bedrock Guardrails.

@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
+
+from botocore.exceptions import BotoCoreError, ClientError, ConnectTimeoutError, ReadTimeoutError
 
 from app.models import SummaryType
 
 
 class BedrockClientUnavailableError(RuntimeError):
     """Raised when no local summary provider is enabled."""
+
+
+class BedrockClientResponseError(RuntimeError):
+    """Raised when the provider response does not satisfy the SDK contract."""
 
 
 @dataclass(frozen=True)
@@ -27,12 +34,17 @@ class BedrockResult:
     text: str
     input_tokens: int
     output_tokens: int
+    total_tokens: int
     latency_ms: int
     model_id: str
 
 
 class BedrockClient(Protocol):
     def converse(self, request: BedrockRequest) -> BedrockResult: ...
+
+
+class BedrockRuntimeClient(Protocol):
+    def converse(self, **kwargs: Any) -> dict[str, Any]: ...
 
 
 class DisabledBedrockClient:
@@ -82,6 +94,102 @@ class FakeBedrockClient:
             text=text,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            total_tokens=input_tokens + output_tokens,
             latency_ms=1,
+            model_id=request.model_id,
+        )
+
+
+class BedrockConverseClient:
+    """Synchronous adapter for an injected Amazon Bedrock Runtime client."""
+
+    def __init__(
+        self,
+        runtime_client: BedrockRuntimeClient,
+        *,
+        max_tokens: int,
+        temperature: float,
+    ) -> None:
+        self._runtime_client = runtime_client
+        self._max_tokens = max_tokens
+        self._temperature = temperature
+
+    def converse(self, request: BedrockRequest) -> BedrockResult:
+        try:
+            response = self._runtime_client.converse(
+                modelId=request.model_id,
+                system=[{"text": request.system_prompt}],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [{"text": request.user_message}],
+                    }
+                ],
+                inferenceConfig={
+                    "maxTokens": self._max_tokens,
+                    "temperature": self._temperature,
+                },
+            )
+        except (ConnectTimeoutError, ReadTimeoutError) as exc:
+            raise TimeoutError("Amazon Bedrock Runtime request timed out") from exc
+        except (BotoCoreError, ClientError) as exc:
+            raise BedrockClientUnavailableError(
+                "Amazon Bedrock Runtime request failed"
+            ) from exc
+
+        try:
+            content = response["output"]["message"]["content"]
+        except (KeyError, TypeError) as exc:
+            raise BedrockClientResponseError(
+                "Amazon Bedrock Runtime returned an invalid response"
+            ) from exc
+
+        if not isinstance(content, list) or not content:
+            raise BedrockClientResponseError(
+                "Amazon Bedrock Runtime returned an invalid response"
+            )
+
+        text_blocks: list[str] = []
+        for block in content:
+            if (
+                not isinstance(block, Mapping)
+                or set(block.keys()) != {"text"}
+                or not isinstance(block["text"], str)
+                or not block["text"].strip()
+            ):
+                raise BedrockClientResponseError(
+                    "Amazon Bedrock Runtime returned an invalid response"
+                )
+            text_blocks.append(block["text"])
+
+        try:
+            usage = response["usage"]
+            input_tokens = usage["inputTokens"]
+            output_tokens = usage["outputTokens"]
+            total_tokens = usage["totalTokens"]
+            latency_ms = response["metrics"]["latencyMs"]
+            stop_reason = response["stopReason"]
+        except (KeyError, TypeError) as exc:
+            raise BedrockClientResponseError(
+                "Amazon Bedrock Runtime returned an invalid response"
+            ) from exc
+
+        if not all(
+            type(value) is int and value >= 0
+            for value in (input_tokens, output_tokens, total_tokens, latency_ms)
+        ):
+            raise BedrockClientResponseError(
+                "Amazon Bedrock Runtime returned an invalid response"
+            )
+        if total_tokens != input_tokens + output_tokens or stop_reason != "end_turn":
+            raise BedrockClientResponseError(
+                "Amazon Bedrock Runtime returned an invalid response"
+            )
+        return BedrockResult(
+            text="".join(text_blocks),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            latency_ms=latency_ms,
             model_id=request.model_id,
         )

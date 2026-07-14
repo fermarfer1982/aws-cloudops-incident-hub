@@ -1,9 +1,14 @@
 """Local, read-only incident summary core.
 
-This package contains no AWS Bedrock SDK client or network integration.
+The real adapter remains disabled unless explicitly selected with an approved model.
 """
 
-from .client import DisabledBedrockClient, FakeBedrockClient
+from .client import BedrockConverseClient, DisabledBedrockClient, FakeBedrockClient
 from .service import IncidentSummaryService
 
-__all__ = ["DisabledBedrockClient", "FakeBedrockClient", "IncidentSummaryService"]
+__all__ = [
+    "BedrockConverseClient",
+    "DisabledBedrockClient",
+    "FakeBedrockClient",
+    "IncidentSummaryService",
+]
