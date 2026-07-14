@@ -301,6 +301,16 @@ No se almacenan access keys AWS en GitHub. No se debe ejecutar una prueba de car
 
 Guía: [prueba AWS efímera y controlada](docs/aws-performance-test.md).
 
+## Generative AI roadmap
+
+Se propone **AWS CloudOps Incident Copilot**, una futura capacidad de solo lectura
+basada en Amazon Bedrock para resumir incidentes con hechos, hipótesis, evidencia y
+siguientes pasos estructurados. Todavía no está implementada, no incluye
+remediación automática y [ADR-013](docs/adr/013-amazon-bedrock-incident-copilot.md)
+permanece **Proposed**. El proyecto continúa **not production-ready**.
+
+Diseño: [Amazon Bedrock Incident Copilot](docs/bedrock-incident-copilot.md).
+
 ## Documentación principal
 
 - [Candidata v1.0.0-lab y runbook de release/rollback](docs/v1.0.0-lab-release-and-rollback.md)

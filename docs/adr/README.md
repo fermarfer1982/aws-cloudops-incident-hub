@@ -12,3 +12,4 @@
 - [ADR-010: Paginación por cursor y pruebas de carga](010-cursor-pagination-and-load-testing.md)
 - [ADR-011: Prueba de rendimiento AWS efímera y controlada](011-controlled-ephemeral-aws-performance-test.md)
 - [ADR-012: Amazon Q y Slack para ChatOps operativo](012-amazon-q-slack-chatops.md)
+- [ADR-013: Amazon Bedrock para Incident Copilot — Proposed](013-amazon-bedrock-incident-copilot.md)
