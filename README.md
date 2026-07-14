@@ -303,11 +303,35 @@ Guía: [prueba AWS efímera y controlada](docs/aws-performance-test.md).
 
 ## Generative AI roadmap
 
-Se propone **AWS CloudOps Incident Copilot**, una futura capacidad de solo lectura
-basada en Amazon Bedrock para resumir incidentes con hechos, hipótesis, evidencia y
-siguientes pasos estructurados. Todavía no está implementada, no incluye
-remediación automática y [ADR-013](docs/adr/013-amazon-bedrock-incident-copilot.md)
-permanece **Proposed**. El proyecto continúa **not production-ready**.
+AWS CloudOps Incident Copilot dispone de un núcleo local de MVP, estrictamente de
+solo lectura, basado en `FakeBedrockClient`. La salida fake es determinista y **no
+procede de un modelo fundacional ni de una inferencia real**. No existe integración
+con Amazon Bedrock, ruta desplegada en API Gateway ni remediación automática. La
+feature está desactivada por defecto, [ADR-013](docs/adr/013-amazon-bedrock-incident-copilot.md)
+permanece **Proposed** y el proyecto continúa **not production-ready**.
+
+El modo local actual no usa Cognito y solo debe ejecutarse en una red de laboratorio
+confiable y con datos sintéticos. Una futura exposición AWS deberá crear una ruta de
+API Gateway y exigir el scope de lectura apropiado; este endpoint todavía no está
+desplegado en AWS.
+
+Ejemplo local con el stack de laboratorio:
+
+```bash
+AI_SUMMARY_ENABLED=true AI_SUMMARY_PROVIDER=fake \
+  docker compose run --service-ports --rm \
+  -e AI_SUMMARY_ENABLED=true -e AI_SUMMARY_PROVIDER=fake backend
+
+incident_id=$(curl -s -X POST http://localhost:8080/events \
+  -H 'Content-Type: application/json' \
+  -d '{"source":"synthetic-01","site":"Lab","type":"BACKUP_FAILED","message":"Synthetic backup failure"}' \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["incident_id"])')
+
+curl -s -X POST "http://localhost:8080/incidents/${incident_id}/ai-summary" \
+  -H 'Content-Type: application/json' \
+  -d '{"summary_type":"technical","include_recommendations":true}' \
+  | python3 -m json.tool
+```
 
 Diseño: [Amazon Bedrock Incident Copilot](docs/bedrock-incident-copilot.md).
 

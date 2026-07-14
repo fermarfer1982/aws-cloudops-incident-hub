@@ -6,7 +6,7 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app, get_service
+from app.main import app, get_ai_summary_service, get_service
 from app.pagination import (
     IncidentPage,
     decode_continuation_token,
@@ -146,3 +146,9 @@ def app_client_factory(memory_repository: MemoryRepository):
     for test_client in clients:
         test_client.__exit__(None, None, None)
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def clear_genai_dependency_override():
+    yield
+    app.dependency_overrides.pop(get_ai_summary_service, None)
