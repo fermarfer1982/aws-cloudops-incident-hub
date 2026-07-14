@@ -1,0 +1,111 @@
+[
+  {
+    "case_id": "api-latency-001",
+    "prediction": {
+      "summary": "The synthetic scenario shows elevated API latency.",
+      "probable_causes": [
+        {
+          "description": "Application saturation",
+          "confidence": "medium",
+          "supporting_evidence": ["Synthetic API latency exceeded 2000 ms"]
+        }
+      ],
+      "recommended_actions": ["Review synthetic application saturation metrics"],
+      "missing_information": ["Recent synthetic deployment information is unavailable"],
+      "limitations": ["The synthetic evidence does not confirm a root cause"]
+    }
+  },
+  {
+    "case_id": "http-5xx-001",
+    "prediction": {
+      "summary": "The synthetic scenario shows an elevated HTTP error rate.",
+      "probable_causes": [
+        {
+          "description": "Downstream service errors",
+          "confidence": "low",
+          "supporting_evidence": ["Synthetic HTTP 5xx rate reached 8 percent"]
+        }
+      ],
+      "recommended_actions": ["Inspect synthetic error categories"],
+      "missing_information": ["Synthetic application logs are unavailable"],
+      "limitations": ["The synthetic facts do not identify a confirmed cause"]
+    }
+  },
+  {
+    "case_id": "lambda-timeout-001",
+    "prediction": {
+      "summary": "Synthetic function invocations reached their execution limit.",
+      "probable_causes": [
+        {
+          "description": "Slow downstream operation",
+          "confidence": "medium",
+          "supporting_evidence": [
+            "Synthetic function duration reached the configured timeout",
+            "Three synthetic invocations timed out"
+          ]
+        }
+      ],
+      "recommended_actions": ["Review synthetic downstream timing data"],
+      "missing_information": ["Synthetic trace details are unavailable"],
+      "limitations": ["The synthetic evidence is limited to timeout observations"]
+    }
+  },
+  {
+    "case_id": "dynamodb-throttling-001",
+    "prediction": {
+      "summary": "The synthetic scenario contains throttled requests.",
+      "probable_causes": [
+        {
+          "description": "Synthetic demand exceeded configured capacity",
+          "confidence": "medium",
+          "supporting_evidence": [
+            "Synthetic DynamoDB throttled request count increased",
+            "Synthetic write demand exceeded the test baseline"
+          ]
+        }
+      ],
+      "recommended_actions": ["Compare synthetic demand with the configured test baseline"],
+      "missing_information": ["Synthetic partition distribution is unavailable"],
+      "limitations": ["No real table or workload was evaluated"]
+    }
+  },
+  {
+    "case_id": "insufficient-alarm-001",
+    "prediction": {
+      "summary": "The synthetic alarm lacks enough detail for diagnosis.",
+      "probable_causes": [
+        {
+          "description": "Insufficient evidence for a probable cause",
+          "confidence": "low",
+          "supporting_evidence": [
+            "A synthetic alarm changed state without metric details"
+          ]
+        }
+      ],
+      "recommended_actions": ["Collect the synthetic metric value and alarm history"],
+      "missing_information": ["The triggering synthetic metric value is unavailable"],
+      "limitations": ["No cause can be confirmed from the available synthetic fact"]
+    }
+  },
+  {
+    "case_id": "executive-unconfirmed-001",
+    "prediction": {
+      "summary": "A temporary synthetic service degradation was observed and recovered.",
+      "probable_causes": [
+        {
+          "description": "Cause remains unconfirmed",
+          "confidence": "low",
+          "supporting_evidence": [
+            "A synthetic service degradation was observed for twelve minutes",
+            "The synthetic service recovered without operator action"
+          ]
+        }
+      ],
+      "recommended_actions": ["Measure impact for the synthetic scenario"],
+      "missing_information": [
+        "Business impact has not been measured for the synthetic scenario"
+      ],
+      "limitations": ["This deterministic fixture is not a semantic quality assessment"]
+    }
+  }
+]
