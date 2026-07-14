@@ -159,4 +159,4 @@ A validated local baseline was executed on 2026-07-10. It recorded approximately
 
 The full evidence record is available in [Local performance baseline — 2026-07-10](performance-baseline-local-2026-07-10.md).
 
-WA-016 is complete. WA-017 has local laboratory evidence but remains open for an approved AWS baseline. WA-018 remains open until AWS measurements justify changes to Lambda, SQS or API throttling.
+WA-016 is complete. WA-017 is complete for the controlled local and AWS laboratory baselines. WA-018 remains conditional on a higher traffic objective and a controlled comparison that justifies changes to Lambda, SQS or API throttling.

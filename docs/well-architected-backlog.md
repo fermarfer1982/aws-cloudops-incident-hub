@@ -34,9 +34,9 @@ Este backlog convierte los hallazgos de `docs/well-architected-review.md` en acc
 | WA-017 | P2 | Performance | Ejecutar pruebas de carga | Informe con p50, p95, errores, throttles, backlog y coste estimado | Tráfico representativo | Completado: baseline local y AWS efímero validado; 152 solicitudes, 0% errores y limpieza verificada |
 | WA-018 | P2 | Performance | Ajustar memoria, concurrencia y batch | Parámetros sustentados por mediciones y comparativa | WA-017 | Baseline AWS justifica mantener parámetros actuales; comparativa controlada pendiente si aumenta el objetivo de escala |
 | WA-019 | P2 | Operational excellence | Ejecutar game day | Evidencia de fallo Lambda, backlog, DLQ y recuperación | WA-014 | Pendiente |
-| WA-020 | P2 | Operational excellence | Añadir runbook de release y rollback | Criterios de rollback y pasos comprobables | Estrategia de release | Pendiente |
+| WA-020 | P2 | Operational excellence | Añadir runbook de release y rollback | Criterios de rollback y pasos comprobables | Estrategia de release | Runbook documentado para v1.0.0-lab; creación de release y rollback todavía no ejercitados |
 | WA-021 | P2 | Security | Definir clasificación y retención de datos | Tabla de categorías, retención, cifrado y borrado | Requisitos legales | Pendiente |
-| WA-022 | P2 | Security | Generar SBOM | Artifact o release incluye SBOM verificable | Herramienta seleccionada | Workflow completado; artifact real pendiente de ejecución |
+| WA-022 | P2 | Security | Generar SBOM | Artifact o release incluye SBOM verificable | Herramienta seleccionada | Parcial: workflow SBOM implementado; SBOM verificable y asociado a la release pendiente |
 | WA-023 | P2 | Cost optimization | Medir coste por 1.000 incidencias | Estimación low/expected/peak con supuestos versionados | WA-017 | Telemetría AWS disponible; facturación final y coste unitario pendientes |
 | WA-024 | P2 | Cost optimization | Ampliar tags obligatorios | Owner, application, environment, cost-center y expiration | Convención de tagging | Pendiente |
 | WA-025 | P2 | Sustainability | Definir KPI de eficiencia | Incidencias por invocación y GB-second, retención y tendencia | WA-017 | Telemetría AWS disponible; definición y seguimiento del KPI pendientes |

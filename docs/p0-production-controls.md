@@ -64,7 +64,10 @@ The incidents table keeps `incident_id` as its primary key and adds four global 
 
 `GET /events` selects the most relevant index and uses DynamoDB Query with descending sort order. Additional filters are applied only to the bounded result stream returned by the selected partition. No operational DynamoDB Scan remains in the repository or IAM policies.
 
-The API still returns a bounded list and does not yet expose a continuation token. Pagination remains a P2 improvement.
+The API exposes cursor pagination through an opaque, versioned continuation token
+based on DynamoDB `LastEvaluatedKey`. `X-Next-Token` is returned only when another
+page exists, and malformed tokens or tokens reused with different filters are
+rejected. The contract is validated locally with bounded, non-overlapping pages.
 
 ## 5. Transactional incremental metrics
 
@@ -94,7 +97,7 @@ cloudops-incidents-v2
 cloudops-incident-metrics-v2
 ```
 
-This avoids attempting an in-place GSI migration of the previous DynamoDB Local table. Existing demonstration records remain in the old local table but are not used by version 0.3. Seed new demo data after rebuilding.
+This avoids attempting an in-place GSI migration of the previous DynamoDB Local table. Existing demonstration records remain in the old local table but are not used by the current schema. Seed new demo data after rebuilding.
 
 ## Ephemeral AWS smoke test
 
@@ -109,14 +112,20 @@ The deployment workflow now validates:
 
 The workflow injects the synthetic event directly into EventBridge instead of weakening API authentication or storing test user credentials.
 
-## Remaining blockers
+## Current control status
 
-Closing WA-001 through WA-005 does not authorize a production launch. The following remain open:
+Closing WA-001 through WA-005 does not authorize a production launch. Later work
+added further controls, but implementation and laboratory evidence must not be
+confused with production readiness.
 
-- API throttling, quotas and abuse protection.
-- Dependency, code and secret scanning.
-- RTO, RPO, PITR and tested restoration.
-- SLO, ownership, escalation and alarm routing.
-- AWS Budget and anomaly detection.
-- Pagination, load testing and empirical tuning.
-- Data classification, retention and privacy requirements.
+| Scope | Status | Evidence or remaining work |
+|---|---|---|
+| Authentication, authorization, explicit CORS, DynamoDB Query and incremental metrics | Completed for laboratory reference | Implemented in application and CDK, covered by tests and guardrails |
+| Cursor pagination and controlled local/AWS baselines | Completed for laboratory reference | WA-016 and WA-017 have versioned evidence; sustained production capacity is not proven |
+| Throttling and supply-chain automation | Completed in the reference implementation | Broader abuse protection, repository-setting evidence, triage and release-bound SBOM evidence remain partial |
+| PITR, RTO/RPO, SLO and restore | Partial | PITR is optional IaC; RTO/RPO and SLO are engineering objectives; approval and a real restore exercise remain pending |
+| Ownership, escalation and alarm routing | Partial | Laboratory ownership and WA-014 `ALARM`/`OK` delivery are validated; production ownership, on-call and organizational routing remain pending |
+| AWS Budgets and Cost Anomaly Detection | Completed for laboratory account | Production budget approval, tagging, unit economics and financial governance remain pending |
+| Data classification, retention, privacy and regional recovery | Pending for production | Business, legal and organizational requirements are not approved |
+
+The workload remains **not production-ready**.

@@ -79,3 +79,11 @@ Válido para cargas mayores, pero innecesario en esta fase. Las transacciones of
 ## Criterios de revisión futura
 
 Revisar esta decisión cuando se introduzcan clientes máquina-a-máquina, un IdP empresarial, autorización por tenant, paginación, cargas que generen particiones calientes o requisitos de reconciliación y auditoría de métricas.
+
+## Resultado posterior
+
+La necesidad de paginación descrita originalmente en este ADR se resolvió después
+mediante [ADR-010](010-cursor-pagination-and-load-testing.md). La API expone un
+continuation token opaco basado en `LastEvaluatedKey`, mantiene el cuerpo como un
+array JSON y realiza una consulta DynamoDB acotada por página. Esta nota registra
+la evolución posterior sin reescribir el contexto ni la decisión histórica.
