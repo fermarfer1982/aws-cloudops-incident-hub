@@ -27,10 +27,10 @@ def test_lambda_bundle_targets_arm64_python313():
 def test_expected_serverless_resources_are_created():
     template = get_template()
     template.resource_count_is("AWS::DynamoDB::Table", 2)
-    template.resource_count_is("AWS::Lambda::Function", 2)
+    template.resource_count_is("AWS::Lambda::Function", 3)
     template.resource_count_is("AWS::ApiGatewayV2::Api", 1)
     template.resource_count_is("AWS::ApiGatewayV2::Authorizer", 1)
-    template.resource_count_is("AWS::ApiGatewayV2::Route", 5)
+    template.resource_count_is("AWS::ApiGatewayV2::Route", 6)
     template.resource_count_is("AWS::Cognito::UserPool", 1)
     template.resource_count_is("AWS::Cognito::UserPoolClient", 1)
     template.resource_count_is("AWS::Cognito::UserPoolResourceServer", 1)
@@ -40,7 +40,7 @@ def test_expected_serverless_resources_are_created():
     template.resource_count_is("AWS::SQS::Queue", 2)
     template.resource_count_is("AWS::Lambda::EventSourceMapping", 1)
     template.resource_count_is("AWS::CloudWatch::Dashboard", 1)
-    template.resource_count_is("AWS::CloudWatch::Alarm", 4)
+    template.resource_count_is("AWS::CloudWatch::Alarm", 6)
 
 
 def test_incident_table_uses_queryable_access_patterns():
@@ -93,7 +93,7 @@ def test_dynamodb_tables_are_ephemeral():
     assert all(table["UpdateReplacePolicy"] == "Delete" for table in tables)
 
 
-def test_lambdas_have_bounded_compute_without_reserved_concurrency():
+def test_lambdas_have_bounded_compute_and_only_genai_has_reserved_concurrency():
     resources = get_template().to_json()["Resources"]
     functions = [
         resource["Properties"]
@@ -101,10 +101,9 @@ def test_lambdas_have_bounded_compute_without_reserved_concurrency():
         if resource["Type"] == "AWS::Lambda::Function"
     ]
 
-    assert len(functions) == 2
+    assert len(functions) == 3
 
     for function in functions:
-        assert "ReservedConcurrentExecutions" not in function
         assert function["MemorySize"] == 256
         assert function["Runtime"] == "python3.13"
         assert function["Architectures"] == ["arm64"]
@@ -112,6 +111,11 @@ def test_lambdas_have_bounded_compute_without_reserved_concurrency():
         variables = function["Environment"]["Variables"]
         assert "TABLE_NAME" in variables
         assert "METRICS_TABLE_NAME" in variables
+
+        if function.get("FunctionName") == "cloudops-genai-summary-function":
+            assert function["ReservedConcurrentExecutions"] == 1
+        else:
+            assert "ReservedConcurrentExecutions" not in function
 
 
 def test_processing_queue_has_encryption_and_dlq():
@@ -166,6 +170,7 @@ def test_cognito_resource_server_defines_route_scopes():
                     Match.object_like({"ScopeName": "incidents.read"}),
                     Match.object_like({"ScopeName": "incidents.write"}),
                     Match.object_like({"ScopeName": "incidents.manage"}),
+                    Match.object_like({"ScopeName": "incidents.summarize"}),
                 ]
             ),
         },
@@ -188,6 +193,9 @@ def test_only_health_route_is_public_and_other_routes_require_jwt_scopes():
             "cloudops-incident-hub/incidents.manage"
         ],
         "GET /metrics": ["cloudops-incident-hub/incidents.read"],
+        "POST /incidents/{incident_id}/ai-summary": [
+            "cloudops-incident-hub/incidents.summarize"
+        ],
     }
     for route_key, scopes in expected_scopes.items():
         assert routes[route_key]["AuthorizationType"] == "JWT"
@@ -219,6 +227,8 @@ def test_operational_alarms_are_named_and_ignore_missing_data():
     assert {alarm["AlarmName"] for alarm in alarms} == {
         "cloudops-api-function-errors",
         "cloudops-processor-function-errors",
+        "cloudops-genai-summary-errors",
+        "cloudops-genai-summary-throttles",
         "cloudops-processing-queue-age",
         "cloudops-processing-dlq-messages",
     }

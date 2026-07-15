@@ -5,8 +5,9 @@
 AWS CloudOps Incident Copilot es una evolución propuesta de AWS CloudOps Incident
 Hub para transformar el contexto acotado de un incidente en un análisis
 estructurado, trazable y de solo lectura mediante Amazon Bedrock. Existe un núcleo
-local y un adaptador de aplicación testeable para Converse API, pero no existe un
-modelo aprobado, acceso al modelo, infraestructura ni evidencia de inferencia real.
+local, un adaptador de aplicación testeable para Converse API y un shell de
+infraestructura cerrado expresado en CDK, pero no existe un modelo aprobado, acceso
+al modelo, despliegue ni evidencia de inferencia real.
 La referencia continúa validada únicamente como laboratorio y no está preparada
 para producción.
 
@@ -28,11 +29,17 @@ para producción.
 - Informe JSON reproducible y CLI para predicciones guardadas.
 - Validaciones estructurales, grounding exacto, causas permitidas, completitud y
   afirmaciones prohibidas.
+- Lambda GenAI dedicada e integración independiente con la HTTP API.
+- Scope Cognito dedicado `cloudops-incident-hub/incidents.summarize`.
+- Rol IAM independiente limitado a `dynamodb:GetItem` sobre la tabla de incidentes.
+- Concurrencia reservada igual a uno, log group separado y alarmas Lambda nativas.
+- Configuración cerrada con `AI_SUMMARY_ENABLED=false` y
+  `AI_SUMMARY_PROVIDER=disabled`, sin permisos Bedrock.
 
 ### Pendiente
 
-- Modelo o inference profile permitido e IAM de mínimo privilegio.
-- Lambda dedicada, API Gateway y scope Cognito de lectura.
+- Región Bedrock aprobada, modelo o inference profile permitido y acceso al modelo.
+- `bedrock:InvokeModel` de mínimo privilegio e inferencia real.
 - Métricas custom de CloudWatch y Amazon Bedrock Guardrails.
 - Workflow AWS manual y controlado.
 - Selección y aprobación de modelo, acceso al modelo e inferencias reales.
@@ -40,11 +47,16 @@ para producción.
 - Coste y latencia reales y evidencia de laboratorio AWS.
 - Decisiones WA-021 sobre clasificación, privacidad y retención.
 - Cambio de ADR-013 de **Proposed** a **Accepted** tras evidencia real.
+- Despliegue y evidencia de validación AWS.
 
 Este estado no completa ninguna fase AWS del diseño histórico. El modo fake es
 solo para laboratorio local con datos sintéticos y no representa inferencia real.
 El arnés local evalúa un contrato determinista; no valida la calidad de un LLM ni
 reemplaza evaluación humana, Bedrock Evaluations o pruebas con modelos reales.
+Esta infraestructura es un shell cerrado y validado mediante synth/tests locales;
+no constituye una integración Amazon Bedrock validada. Las métricas de tokens,
+latencia de proveedor, coste, grounding, validación y errores del provider requieren
+cambios posteriores de aplicación.
 
 ## 2. Problema que resuelve
 

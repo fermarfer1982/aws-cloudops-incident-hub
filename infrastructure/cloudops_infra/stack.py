@@ -29,6 +29,7 @@ RESOURCE_SERVER_IDENTIFIER = "cloudops-incident-hub"
 READ_SCOPE = f"{RESOURCE_SERVER_IDENTIFIER}/incidents.read"
 WRITE_SCOPE = f"{RESOURCE_SERVER_IDENTIFIER}/incidents.write"
 MANAGE_SCOPE = f"{RESOURCE_SERVER_IDENTIFIER}/incidents.manage"
+SUMMARIZE_SCOPE = f"{RESOURCE_SERVER_IDENTIFIER}/incidents.summarize"
 
 LAMBDA_PIP_PLATFORM = "manylinux2014_aarch64"
 LAMBDA_PYTHON_VERSION = "3.13"
@@ -237,10 +238,14 @@ class CloudOpsIncidentHubStack(Stack):
             scope_name="incidents.manage",
             scope_description="Change incident workflow status",
         )
+        summarize_scope = cognito.ResourceServerScope(
+            scope_name="incidents.summarize",
+            scope_description="Generate controlled summaries for incidents",
+        )
         resource_server = user_pool.add_resource_server(
             "ApiResourceServer",
             identifier=RESOURCE_SERVER_IDENTIFIER,
-            scopes=[read_scope, write_scope, manage_scope],
+            scopes=[read_scope, write_scope, manage_scope, summarize_scope],
         )
         user_pool_client = user_pool.add_client(
             "WebClient",
@@ -261,6 +266,10 @@ class CloudOpsIncidentHubStack(Stack):
                     cognito.OAuthScope.resource_server(resource_server, read_scope),
                     cognito.OAuthScope.resource_server(resource_server, write_scope),
                     cognito.OAuthScope.resource_server(resource_server, manage_scope),
+                    cognito.OAuthScope.resource_server(
+                        resource_server,
+                        summarize_scope,
+                    ),
                 ],
                 callback_urls=list(oauth_callback_urls),
                 logout_urls=list(oauth_logout_urls),
@@ -335,6 +344,57 @@ class CloudOpsIncidentHubStack(Stack):
             log_group=processor_log_group,
             tracing=lambda_.Tracing.DISABLED,
         )
+        genai_log_group = logs.LogGroup(
+            self,
+            "GenAiSummaryFunctionLogGroup",
+            log_group_name="/aws/lambda/cloudops-genai-summary-function",
+            retention=logs.RetentionDays.ONE_DAY,
+            removal_policy=RemovalPolicy.DESTROY,
+        )
+        genai_role = iam.Role(
+            self,
+            "GenAiSummaryFunctionRole",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+        )
+        genai_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["logs:CreateLogStream", "logs:PutLogEvents"],
+                resources=[
+                    genai_log_group.log_group_arn,
+                    f"{genai_log_group.log_group_arn}:*",
+                ],
+            )
+        )
+        genai_function = lambda_.Function(
+            self,
+            "GenAiSummaryFunction",
+            function_name="cloudops-genai-summary-function",
+            runtime=lambda_.Runtime.PYTHON_3_13,
+            architecture=lambda_.Architecture.ARM_64,
+            handler="app.main.handler",
+            code=backend_code(),
+            environment={
+                "TABLE_NAME": table.table_name,
+                "METRICS_TABLE_NAME": metrics_table.table_name,
+                "CORS_ORIGINS": ",".join(allowed_origins),
+                "AI_SUMMARY_ENABLED": "false",
+                "AI_SUMMARY_PROVIDER": "disabled",
+                "AI_SUMMARY_PROMPT_VERSION": "incident-summary-v1",
+                "AI_SUMMARY_MAX_CONTEXT_CHARS": "8000",
+                "AI_SUMMARY_MAX_OUTPUT_CHARS": "6000",
+                "AI_SUMMARY_MAX_TOKENS": "800",
+                "AI_SUMMARY_TEMPERATURE": "0.0",
+                "AI_SUMMARY_CONNECT_TIMEOUT_SECONDS": "3",
+                "AI_SUMMARY_READ_TIMEOUT_SECONDS": "30",
+                "AI_SUMMARY_MAX_ATTEMPTS": "2",
+            },
+            timeout=Duration.seconds(15),
+            memory_size=256,
+            reserved_concurrent_executions=1,
+            log_group=genai_log_group,
+            role=genai_role,
+            tracing=lambda_.Tracing.DISABLED,
+        )
         processor_function.add_event_source(
             lambda_event_sources.SqsEventSource(
                 processing_queue,
@@ -371,10 +431,20 @@ class CloudOpsIncidentHubStack(Stack):
                 resources=[table.table_arn, metrics_table.table_arn],
             )
         )
+        genai_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["dynamodb:GetItem"],
+                resources=[table.table_arn],
+            )
+        )
 
         integration = integrations.HttpLambdaIntegration(
             "ApiIntegration",
             handler=api_function,
+        )
+        genai_integration = integrations.HttpLambdaIntegration(
+            "GenAiSummaryIntegration",
+            handler=genai_function,
         )
         jwt_authorizer = authorizers.HttpJwtAuthorizer(
             "CognitoJwtAuthorizer",
@@ -431,6 +501,13 @@ class CloudOpsIncidentHubStack(Stack):
             authorizer=jwt_authorizer,
             authorization_scopes=[READ_SCOPE],
         )
+        api.add_routes(
+            path="/incidents/{incident_id}/ai-summary",
+            methods=[apigwv2.HttpMethod.POST],
+            integration=genai_integration,
+            authorizer=jwt_authorizer,
+            authorization_scopes=[SUMMARIZE_SCOPE],
+        )
 
         api_error_alarm = api_function.metric_errors(
             period=Duration.minutes(5),
@@ -453,6 +530,32 @@ class CloudOpsIncidentHubStack(Stack):
             "ProcessorFunctionErrorsAlarm",
             alarm_name="cloudops-processor-function-errors",
             alarm_description="The asynchronous incident processor returned an error.",
+            threshold=1,
+            evaluation_periods=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+        )
+        genai_error_alarm = genai_function.metric_errors(
+            period=Duration.minutes(5),
+            statistic="Sum",
+        ).create_alarm(
+            self,
+            "GenAiSummaryFunctionErrorsAlarm",
+            alarm_name="cloudops-genai-summary-errors",
+            alarm_description="The disabled-by-default GenAI summary Lambda returned an error.",
+            threshold=1,
+            evaluation_periods=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+        )
+        genai_throttle_alarm = genai_function.metric_throttles(
+            period=Duration.minutes(5),
+            statistic="Sum",
+        ).create_alarm(
+            self,
+            "GenAiSummaryFunctionThrottlesAlarm",
+            alarm_name="cloudops-genai-summary-throttles",
+            alarm_description="The GenAI summary Lambda was throttled.",
             threshold=1,
             evaluation_periods=1,
             comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
@@ -537,6 +640,32 @@ class CloudOpsIncidentHubStack(Stack):
                 width=12,
             ),
             cloudwatch.GraphWidget(
+                title="GenAI summary Lambda activity",
+                left=[
+                    genai_function.metric_invocations(
+                        period=Duration.minutes(5), statistic="Sum", label="Invocations"
+                    ),
+                    genai_function.metric_errors(
+                        period=Duration.minutes(5), statistic="Sum", label="Errors"
+                    ),
+                    genai_function.metric_throttles(
+                        period=Duration.minutes(5), statistic="Sum", label="Throttles"
+                    ),
+                ],
+                right=[
+                    genai_function.metric_duration(
+                        period=Duration.minutes(5), statistic="p95", label="Duration p95"
+                    ),
+                    genai_function.metric(
+                        "ConcurrentExecutions",
+                        period=Duration.minutes(5),
+                        statistic="Maximum",
+                        label="Concurrent executions",
+                    ),
+                ],
+                width=12,
+            ),
+            cloudwatch.GraphWidget(
                 title="Processing queue backlog",
                 left=[
                     processing_queue.metric_approximate_number_of_messages_visible(
@@ -567,6 +696,16 @@ class CloudOpsIncidentHubStack(Stack):
             cloudwatch.AlarmWidget(
                 title="Processor errors alarm",
                 alarm=processor_error_alarm,
+                width=6,
+            ),
+            cloudwatch.AlarmWidget(
+                title="GenAI summary errors alarm",
+                alarm=genai_error_alarm,
+                width=6,
+            ),
+            cloudwatch.AlarmWidget(
+                title="GenAI summary throttles alarm",
+                alarm=genai_throttle_alarm,
                 width=6,
             ),
             cloudwatch.AlarmWidget(

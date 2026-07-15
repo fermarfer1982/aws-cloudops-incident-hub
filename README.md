@@ -305,8 +305,13 @@ Guía: [prueba AWS efímera y controlada](docs/aws-performance-test.md).
 
 AWS CloudOps Incident Copilot dispone de un núcleo local de MVP, estrictamente de
 solo lectura. Incluye un adaptador testeable para Amazon Bedrock Converse API, pero
-no hay modelo aprobado, acceso concedido, infraestructura, ruta desplegada ni
-evidencia de inferencia real. `FakeBedrockClient` sigue produciendo una salida
+no hay modelo aprobado, acceso concedido, despliegue ni evidencia de inferencia
+real. La infraestructura expresada en CDK incorpora un shell cerrado: una Lambda
+GenAI dedicada, la ruta `POST /incidents/{incident_id}/ai-summary` protegida por el
+scope `cloudops-incident-hub/incidents.summarize`, concurrencia reservada igual a
+uno y un rol limitado a `dynamodb:GetItem`. La función configura
+`AI_SUMMARY_ENABLED=false` y `AI_SUMMARY_PROVIDER=disabled`, y no contiene permisos
+Bedrock. `FakeBedrockClient` sigue produciendo una salida
 determinista que **no procede de un modelo fundacional ni de una inferencia real**.
 La feature y el proveedor real están desactivados por defecto,
 [ADR-013](docs/adr/013-amazon-bedrock-incident-copilot.md) permanece **Proposed** y
@@ -320,9 +325,10 @@ modelos ni mide calidad semántica general; tampoco sustituye la evaluación hum
 las evaluaciones con modelos reales ni constituye evidencia AWS.
 
 El modo local actual no usa Cognito y solo debe ejecutarse en una red de laboratorio
-confiable y con datos sintéticos. Una futura exposición AWS deberá crear una ruta de
-API Gateway y exigir el scope de lectura apropiado; este endpoint todavía no está
-desplegado en AWS.
+confiable y con datos sintéticos. La ruta y el scope dedicados existen únicamente en
+IaC y han sido diseñados para fallar de forma cerrada; no se han desplegado ni
+validado en AWS y no demuestran una inferencia real ni una integración Amazon
+Bedrock validada.
 
 Ejemplo local con el stack de laboratorio:
 
