@@ -113,6 +113,15 @@ Resources:
                 Effect: Allow
                 Action: cloudwatch:GetMetricData
                 Resource: "*"
+              - Sid: VerifyGenAiSummaryFunctionCleanup
+                Effect: Allow
+                Action: lambda:GetFunction
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:lambda:${DeploymentRegion}:${AWS::AccountId}:function:cloudops-genai-summary-function
+              - Sid: VerifyGenAiSummaryLogGroupCleanup
+                Effect: Allow
+                Action: logs:DescribeLogGroups
+                Resource: "*"
 
 Outputs:
   RoleArn:

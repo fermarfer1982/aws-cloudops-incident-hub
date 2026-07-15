@@ -7,7 +7,7 @@ from aws_cdk import aws_apigatewayv2 as apigwv2
 from aws_cdk import aws_cognito as cognito
 from aws_cdk import aws_lambda as lambda_
 
-from .stack import READ_SCOPE, WRITE_SCOPE
+from .stack import READ_SCOPE, SUMMARIZE_SCOPE, WRITE_SCOPE
 
 
 def apply_aws_performance_controls(
@@ -54,7 +54,7 @@ def apply_aws_performance_controls(
         prevent_user_existence_errors="ENABLED",
         allowed_o_auth_flows=["client_credentials"],
         allowed_o_auth_flows_user_pool_client=True,
-        allowed_o_auth_scopes=[READ_SCOPE, WRITE_SCOPE],
+        allowed_o_auth_scopes=[READ_SCOPE, WRITE_SCOPE, SUMMARIZE_SCOPE],
         access_token_validity=15,
         token_validity_units=cognito.CfnUserPoolClient.TokenValidityUnitsProperty(
             access_token="minutes"

@@ -423,6 +423,59 @@ telemetría, evaluación continua, UI explícita y decisión humana.
 - Evaluación sintética con umbrales aprobados.
 - ADR-013 cambia de **Proposed** a **Accepted** solo después de evidencia real.
 
+## 27. Validación AWS controlada del shell cerrado
+
+El workflow manual existente `deploy-ephemeral.yml` prepara una validación efímera
+del shell de infraestructura GenAI con el flujo **deployed + authorized + disabled
++ destroyed**. Solo puede iniciarse mediante `workflow_dispatch` desde `main`, usa
+OIDC y el GitHub Environment `aws-ephemeral`, y exige la confirmación literal
+`VALIDATE-GENAI-SHELL-AND-DESTROY`.
+
+Antes de ejecutar esta validación, un administrador debe configurar al menos un
+required reviewer en `aws-ephemeral`. Actualmente esa protection rule sigue
+pendiente. La confirmación textual no sustituye la aprobación independiente del
+Environment y el workflow no debe ejecutarse hasta completar esa configuración
+administrativa.
+
+El despliegue crea de forma condicional un único cliente M2M efímero, con secret y
+grant `client_credentials`, y tokens de 15 minutos. Un token solicita exactamente
+`incidents.read`, `incidents.write` e `incidents.summarize`; otro solicita solo
+`incidents.read` e `incidents.write` para demostrar que la ruta rechaza con 403 un
+token sin `incidents.summarize`. La petición autenticada espera el error público
+estable HTTP 503 porque `AI_SUMMARY_ENABLED=false` y
+`AI_SUMMARY_PROVIDER=disabled`.
+
+La feature gate se evalúa antes de validar o leer el incidente en la ruta GenAI.
+Por ello, la creación y lectura del incidente completamente sintético se comprueban
+mediante la API normal, y la invocación GenAI cerrada no demuestra la ejecución de
+`dynamodb:GetItem`. La plantilla sintetizada y la desplegada sí verifican que el rol
+independiente solo permite `dynamodb:GetItem`, `logs:CreateLogStream` y
+`logs:PutLogEvents`, sin permisos Bedrock ni escrituras.
+
+La validación no descarga mensajes de CloudWatch Logs. Solo consulta una métrica
+nativa agregada, genera un único artifact JSON con campos permitidos y destruye el
+stack incluso cuando falla el smoke test. Después comprueba la ausencia del stack,
+la Lambda GenAI y su Log Group. Para estas dos comprobaciones finales, el rol OIDC
+necesita exclusivamente `lambda:GetFunction` sobre
+`cloudops-genai-summary-function` y `logs:DescribeLogGroups` como acción de listado.
+El wildcard de recurso de `DescribeLogGroups` no concede lectura del contenido: el
+rol no recibe `GetLogEvents`, `FilterLogEvents`, Logs Insights ni acciones de
+escritura. Ambas autorizaciones se usan solo para verificar el cleanup. Tokens,
+secret, payload, incidente, outputs,
+plantillas y logs brutos permanecen fuera de la evidencia.
+
+La versión actualizada de `bootstrap/github-oidc-role.yml` debe aplicarse
+administrativamente al stack de bootstrap antes de ejecutar el workflow. Modificar
+el archivo del repositorio no actualiza por sí solo el rol OIDC ya desplegado. Este
+prerrequisito y la configuración de al menos un required reviewer en
+`aws-ephemeral` son obligatorios; hasta cumplir ambos, el workflow no debe
+ejecutarse.
+
+La validación demuestra únicamente que el shell se despliega, autoriza, permanece
+desactivado y se destruye; no constituye una integración Amazon Bedrock validada.
+No invoca Bedrock, no ejecuta inferencias y no selecciona modelos. ADR-013 permanece
+**Proposed** y el proyecto continúa **not production-ready**.
+
 ## Referencias oficiales
 
 - [Inference using Converse API](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference.html)

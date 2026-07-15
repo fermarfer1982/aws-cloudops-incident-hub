@@ -5,13 +5,13 @@ on:
   workflow_dispatch:
     inputs:
       confirmation:
-        description: Type DEPLOY-AND-DESTROY to continue
+        description: Type VALIDATE-GENAI-SHELL-AND-DESTROY to continue
         required: true
         type: string
       run_smoke_test:
         description: Run authorization and asynchronous processing smoke tests
         required: true
-        default: true
+        default: false
         type: boolean
       run_chatops_test:
         description: Route controlled ALARM and OK transitions to Slack
@@ -31,6 +31,7 @@ jobs:
   deploy-test-destroy:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # Administrators must configure required reviewers on this Environment before execution.
     environment: aws-ephemeral
     timeout-minutes: 30
     env:
@@ -45,11 +46,12 @@ jobs:
 
     steps:
       - name: Validate explicit confirmation
+        id: preflight
         env:
           CONFIRMATION: ${{ inputs.confirmation }}
         run: |
-          test "$CONFIRMATION" = "DEPLOY-AND-DESTROY" || {
-            echo "Confirmation must be exactly DEPLOY-AND-DESTROY"
+          test "$CONFIRMATION" = "VALIDATE-GENAI-SHELL-AND-DESTROY" || {
+            echo "Confirmation must be exactly VALIDATE-GENAI-SHELL-AND-DESTROY"
             exit 1
           }
 
@@ -96,9 +98,13 @@ jobs:
           unset-current-credentials: true
 
       - name: Verify AWS identity
-        run: aws sts get-caller-identity
+        run: |
+          aws sts get-caller-identity > /tmp/aws-identity.json
+          test -s /tmp/aws-identity.json
+          rm -f /tmp/aws-identity.json
 
       - name: Validate and synthesize infrastructure
+        id: synth
         working-directory: infrastructure
         run: |
           python -m pytest -q tests
@@ -106,6 +112,7 @@ jobs:
           default_context=(
             -c account="$AWS_ACCOUNT_ID"
             -c region="$AWS_REGION"
+            -c enable_load_test_client=true
           )
 
           cdk synth "$STACK_NAME" --quiet "${default_context[@]}"
@@ -113,6 +120,8 @@ jobs:
           python ../scripts/check_zero_cost.py \
             "cdk.out/${STACK_NAME}.template.json"
           python ../scripts/check_p0_controls.py
+          python ../scripts/validate_genai_shell_aws.py template \
+            --template "cdk.out/${STACK_NAME}.template.json"
 
           if [ "$RUN_CHATOPS_TEST" = "true" ]; then
             rm -rf cdk.out
@@ -126,6 +135,7 @@ jobs:
           fi
 
       - name: Deploy ephemeral stack
+        id: deploy
         working-directory: infrastructure
         run: |
           mkdir -p ../evidence
@@ -133,6 +143,7 @@ jobs:
           deploy_context=(
             -c account="$AWS_ACCOUNT_ID"
             -c region="$AWS_REGION"
+            -c enable_load_test_client=true
           )
 
           if [ "$RUN_CHATOPS_TEST" = "true" ]; then
@@ -146,6 +157,162 @@ jobs:
             --require-approval never \
             --outputs-file ../evidence/cdk-outputs.json \
             "${deploy_context[@]}"
+
+      - name: Validate deployed GenAI shell IAM and resources
+        id: iam
+        if: steps.deploy.outcome == 'success'
+        run: |
+          set -euo pipefail
+          trap 'rm -f /tmp/genai-deployed-template-response.json /tmp/genai-deployed-template.json' EXIT
+          aws cloudformation get-template \
+            --stack-name "$STACK_NAME" \
+            --region "$AWS_REGION" > /tmp/genai-deployed-template-response.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          response = json.loads(
+              Path("/tmp/genai-deployed-template-response.json").read_text(encoding="utf-8")
+          )
+          body = response.get("TemplateBody")
+          if isinstance(body, str):
+              body = json.loads(body)
+          if not isinstance(body, dict):
+              raise SystemExit("Deployed template body is unavailable")
+          Path("/tmp/genai-deployed-template.json").write_text(
+              json.dumps(body, separators=(",", ":")),
+              encoding="utf-8",
+          )
+          PY
+          python scripts/validate_genai_shell_aws.py template \
+            --template /tmp/genai-deployed-template.json
+
+      - name: Exercise authorized and closed GenAI shell
+        id: genai_smoke
+        if: steps.deploy.outcome == 'success' && steps.iam.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          cleanup_temporaries() {
+            rm -f /tmp/genai-* /tmp/cloudops-*-token.json /tmp/client-secret.txt
+          }
+          trap cleanup_temporaries EXIT
+
+          python - <<'PY' > /tmp/genai-outputs.env
+          import json
+          import shlex
+          from pathlib import Path
+
+          outputs = json.loads(
+              Path("evidence/cdk-outputs.json").read_text(encoding="utf-8")
+          )["CloudOpsIncidentHubStack"]
+          required = ("ApiUrl", "UserPoolId", "LoadTestClientId", "LoadTestTokenUrl")
+          for name in required:
+              value = str(outputs[name]).rstrip("/")
+              print(f"{name.upper()}={shlex.quote(value)}")
+          PY
+          source /tmp/genai-outputs.env
+
+          aws cognito-idp describe-user-pool-client \
+            --user-pool-id "$USERPOOLID" \
+            --client-id "$LOADTESTCLIENTID" \
+            --query 'UserPoolClient.ClientSecret' \
+            --output text > /tmp/client-secret.txt
+          CLIENT_SECRET=$(< /tmp/client-secret.txt)
+          test -n "$CLIENT_SECRET"
+          test "$CLIENT_SECRET" != "None"
+          echo "::add-mask::$CLIENT_SECRET"
+
+          FULL_SCOPES="cloudops-incident-hub/incidents.read cloudops-incident-hub/incidents.write cloudops-incident-hub/incidents.summarize"
+          PARTIAL_SCOPES="cloudops-incident-hub/incidents.read cloudops-incident-hub/incidents.write"
+          curl --silent --show-error --connect-timeout 5 --max-time 15 \
+            --user "$LOADTESTCLIENTID:$CLIENT_SECRET" \
+            --header "Content-Type: application/x-www-form-urlencoded" \
+            --data-urlencode "grant_type=client_credentials" \
+            --data-urlencode "scope=$FULL_SCOPES" \
+            "$LOADTESTTOKENURL" > /tmp/cloudops-full-token.json
+          curl --silent --show-error --connect-timeout 5 --max-time 15 \
+            --user "$LOADTESTCLIENTID:$CLIENT_SECRET" \
+            --header "Content-Type: application/x-www-form-urlencoded" \
+            --data-urlencode "grant_type=client_credentials" \
+            --data-urlencode "scope=$PARTIAL_SCOPES" \
+            "$LOADTESTTOKENURL" > /tmp/cloudops-partial-token.json
+          FULL_TOKEN=$(python -c 'import json; print(json.load(open("/tmp/cloudops-full-token.json"))["access_token"])')
+          PARTIAL_TOKEN=$(python -c 'import json; print(json.load(open("/tmp/cloudops-partial-token.json"))["access_token"])')
+          test -n "$FULL_TOKEN"
+          test -n "$PARTIAL_TOKEN"
+          echo "::add-mask::$FULL_TOKEN"
+          echo "::add-mask::$PARTIAL_TOKEN"
+
+          printf '%s' '{"source":"synthetic-validation","site":"ephemeral-lab","type":"GENAI_SHELL_VALIDATION","message":"Synthetic incident for disabled GenAI shell validation","value":1,"metadata":{"synthetic":true}}' > /tmp/genai-event.json
+          CREATE_STATUS=$(curl --silent --show-error --connect-timeout 5 --max-time 20 \
+            --output /tmp/genai-create-response.json --write-out '%{http_code}' \
+            --request POST --header "Authorization: Bearer $FULL_TOKEN" \
+            --header "Content-Type: application/json" --data-binary @/tmp/genai-event.json \
+            "$APIURL/events")
+          test "$CREATE_STATUS" = "202"
+          INCIDENT_ID=$(python -c 'import json; print(json.load(open("/tmp/genai-create-response.json"))["incident_id"])')
+          test -n "$INCIDENT_ID"
+          echo "::add-mask::$INCIDENT_ID"
+
+          observed=false
+          for _ in $(seq 1 24); do
+            READ_STATUS=$(curl --silent --show-error --connect-timeout 5 --max-time 20 \
+              --output /tmp/genai-incidents.json --write-out '%{http_code}' \
+              --header "Authorization: Bearer $FULL_TOKEN" "$APIURL/events?limit=100")
+            if [ "$READ_STATUS" = "200" ] && INCIDENT_ID="$INCIDENT_ID" python - <<'PY'
+          import json
+          import os
+
+          with open("/tmp/genai-incidents.json", encoding="utf-8") as handle:
+              incidents = json.load(handle)
+          raise SystemExit(
+              0 if any(item.get("incident_id") == os.environ["INCIDENT_ID"] for item in incidents) else 1
+          )
+          PY
+            then
+              observed=true
+              break
+            fi
+            sleep 5
+          done
+          test "$observed" = true
+          echo "Synthetic incident observed: true"
+
+          printf '%s' '{"summary_type":"technical"}' > /tmp/genai-summary-request.json
+          AUTHENTICATED_STATUS=$(curl --silent --show-error --connect-timeout 5 --max-time 20 \
+            --dump-header /tmp/genai-authenticated-headers.txt \
+            --output /tmp/genai-authenticated-body.json --write-out '%{http_code}' \
+            --request POST --header "Authorization: Bearer $FULL_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data-binary @/tmp/genai-summary-request.json \
+            "$APIURL/incidents/$INCIDENT_ID/ai-summary")
+          UNAUTHENTICATED_STATUS=$(curl --silent --show-error --connect-timeout 5 --max-time 20 \
+            --output /tmp/genai-unauthenticated-body.txt --write-out '%{http_code}' \
+            --request POST --header "Content-Type: application/json" \
+            --data-binary @/tmp/genai-summary-request.json \
+            "$APIURL/incidents/$INCIDENT_ID/ai-summary")
+          WRONG_SCOPE_STATUS=$(curl --silent --show-error --connect-timeout 5 --max-time 20 \
+            --output /tmp/genai-wrong-scope-body.txt --write-out '%{http_code}' \
+            --request POST --header "Authorization: Bearer $PARTIAL_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data-binary @/tmp/genai-summary-request.json \
+            "$APIURL/incidents/$INCIDENT_ID/ai-summary")
+          python scripts/validate_genai_shell_aws.py responses \
+            --authenticated-status "$AUTHENTICATED_STATUS" \
+            --authenticated-headers /tmp/genai-authenticated-headers.txt \
+            --authenticated-body /tmp/genai-authenticated-body.json \
+            --unauthenticated-status "$UNAUTHENTICATED_STATUS" \
+            --wrong-scope-status "$WRONG_SCOPE_STATUS"
+
+          aws cloudwatch get-metric-data --region "$AWS_REGION" \
+            --start-time "$(date -u -d '10 minutes ago' +%Y-%m-%dT%H:%M:%SZ)" \
+            --end-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --metric-data-queries '[{"Id":"incoming","MetricStat":{"Metric":{"Namespace":"AWS/Logs","MetricName":"IncomingLogEvents","Dimensions":[{"Name":"LogGroupName","Value":"/aws/lambda/cloudops-genai-summary-function"}]},"Period":60,"Stat":"Sum"},"ReturnData":true}]' \
+            > /tmp/genai-log-metric.json || true
+          printf 'AUTHENTICATED_STATUS=%q\nUNAUTHENTICATED_STATUS=%q\nWRONG_SCOPE_STATUS=%q\n' \
+            "$AUTHENTICATED_STATUS" "$UNAUTHENTICATED_STATUS" "$WRONG_SCOPE_STATUS" \
+            > /tmp/shell-validation-status.env
 
       - name: Exercise controlled ChatOps ALARM and OK transitions
         if: inputs.run_chatops_test
@@ -591,7 +758,7 @@ jobs:
           } > evidence/deployment-metadata.txt
 
       - name: Upload temporary deployment evidence
-        if: always()
+        if: always() && (inputs.run_smoke_test || inputs.run_chatops_test)
         uses: actions/upload-artifact@v4
         with:
           name: aws-ephemeral-evidence-${{ github.run_id }}
@@ -600,20 +767,122 @@ jobs:
           retention-days: 7
 
       - name: Destroy ephemeral stack
+        id: destroy
         if: always() && steps.aws_credentials.outcome == 'success'
         working-directory: infrastructure
         run: |
           cdk destroy "$STACK_NAME" --force \
             -c account="$AWS_ACCOUNT_ID" \
-            -c region="$AWS_REGION"
+            -c region="$AWS_REGION" \
+            -c enable_load_test_client=true
 
       - name: Verify stack removal
+        id: cleanup
         if: always() && steps.aws_credentials.outcome == 'success'
         run: |
-          if aws cloudformation describe-stacks \
+          set -euo pipefail
+          cleanup_verification_files() {
+            rm -f /tmp/genai-cleanup-*.json /tmp/genai-cleanup-*.txt
+          }
+          trap cleanup_verification_files EXIT
+
+          set +e
+          aws cloudformation describe-stacks \
             --stack-name "$STACK_NAME" \
-            --region "$AWS_REGION" >/dev/null 2>&1; then
-            echo "Stack still exists after the cleanup step"
+            --region "$AWS_REGION" \
+            > /tmp/genai-cleanup-stack.json \
+            2> /tmp/genai-cleanup-stack-error.txt
+          stack_status=$?
+          set -e
+          if [ "$stack_status" -eq 0 ]; then
+            echo "Cleanup failed: stack still exists"
             exit 1
           fi
-          echo "Stack removal verified"
+          if ! grep -q "does not exist" /tmp/genai-cleanup-stack-error.txt; then
+            echo "Cleanup failed: stack absence could not be verified"
+            exit 1
+          fi
+
+          set +e
+          aws lambda get-function \
+            --function-name cloudops-genai-summary-function \
+            --region "$AWS_REGION" \
+            > /tmp/genai-cleanup-function.json \
+            2> /tmp/genai-cleanup-function-error.txt
+          function_status=$?
+          set -e
+          if [ "$function_status" -eq 0 ]; then
+            echo "Cleanup failed: GenAI Lambda still exists"
+            exit 1
+          fi
+          if ! grep -q "ResourceNotFoundException" \
+            /tmp/genai-cleanup-function-error.txt; then
+            echo "Cleanup failed: GenAI Lambda absence could not be verified"
+            exit 1
+          fi
+
+          if ! aws logs describe-log-groups \
+            --log-group-name-prefix /aws/lambda/cloudops-genai-summary-function \
+            --region "$AWS_REGION" \
+            --query "logGroups[?logGroupName=='/aws/lambda/cloudops-genai-summary-function'].logGroupName" \
+            --output json \
+            > /tmp/genai-cleanup-log-groups.json \
+            2> /tmp/genai-cleanup-log-groups-error.txt; then
+            echo "Cleanup failed: GenAI Log Group absence could not be verified"
+            exit 1
+          fi
+          if ! python - <<'PY'
+          import json
+          from pathlib import Path
+
+          names = json.loads(
+              Path("/tmp/genai-cleanup-log-groups.json").read_text(encoding="utf-8")
+          )
+          raise SystemExit(0 if names == [] else 1)
+          PY
+          then
+            echo "Cleanup failed: GenAI Log Group still exists"
+            exit 1
+          fi
+          echo "Cleanup verified"
+
+      - name: Generate sanitized GenAI shell evidence
+        id: evidence
+        if: always() && steps.genai_smoke.outcome == 'success' && steps.iam.outcome == 'success' && steps.destroy.outcome == 'success' && steps.cleanup.outcome == 'success'
+        run: |
+          source /tmp/shell-validation-status.env
+          python scripts/validate_genai_shell_aws.py evidence \
+            --output evidence/genai-shell-validation.json \
+            --commit-sha "$GITHUB_SHA" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --region "$AWS_REGION" \
+            --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --unauthenticated-status "$UNAUTHENTICATED_STATUS"
+
+      - name: Upload sanitized GenAI shell evidence
+        if: always() && steps.evidence.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: genai-shell-aws-validation-${{ github.run_id }}
+          path: evidence/genai-shell-validation.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove GenAI validation temporary files
+        if: always()
+        run: |
+          rm -f /tmp/genai-* /tmp/cloudops-*-token.json /tmp/client-secret.txt
+          rm -f /tmp/shell-validation-status.env
+          rm -f evidence/cdk-outputs.json
+
+      - name: Enforce GenAI validation and cleanup outcomes
+        if: always()
+        run: |
+          test "${{ steps.preflight.outcome }}" = "success"
+          test "${{ steps.synth.outcome }}" = "success"
+          test "${{ steps.deploy.outcome }}" = "success"
+          test "${{ steps.genai_smoke.outcome }}" = "success"
+          test "${{ steps.iam.outcome }}" = "success"
+          test "${{ steps.evidence.outcome }}" = "success"
+          test "${{ steps.destroy.outcome }}" = "success"
+          test "${{ steps.cleanup.outcome }}" = "success"
