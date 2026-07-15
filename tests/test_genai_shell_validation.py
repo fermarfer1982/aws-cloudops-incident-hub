@@ -523,11 +523,11 @@ def test_cleanup_never_reads_log_events_or_prints_get_function_response():
         ("environment: aws-ephemeral", "environment: missing"),
         ("aws-actions/configure-aws-credentials@v6.1.0", "actions/checkout@v4"),
         (
-            "id: destroy\n        if: always() && steps.aws_credentials.outcome == 'success'",
+            "id: destroy\n        if: always() && steps.preflight.outcome == 'success' && steps.aws_credentials.outcome == 'success'",
             "id: destroy\n        if: success()",
         ),
         (
-            "id: cleanup\n        if: always() && steps.aws_credentials.outcome == 'success'",
+            "id: cleanup\n        if: always() && steps.preflight.outcome == 'success' && steps.aws_credentials.outcome == 'success' && steps.destroy.outcome == 'success'",
             "id: cleanup\n        if: success()",
         ),
         (
@@ -566,3 +566,77 @@ def test_workflow_guardrail_rejects_missing_or_weakened_controls(old: str, new: 
 def test_workflow_guardrail_rejects_automatic_tracing_or_bedrock(addition: str):
     mutated = workflow().replace("permissions:\n", addition + "permissions:\n", 1)
     assert validate_deploy_workflow(mutated)
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ('test "$RUN_SMOKE_TEST" = "false"', 'test "$RUN_SMOKE_TEST" = "true"'),
+        ('test "$RUN_CHATOPS_TEST" = "false"', 'test "$RUN_CHATOPS_TEST" = "true"'),
+        ('test "$CONFIRMATION" = "DEPLOY-AND-DESTROY"', 'test "$CONFIRMATION" = "VALIDATE-GENAI-SHELL-AND-DESTROY"'),
+        ('test "$CONFIRMATION" = "VALIDATE-GENAI-SHELL-AND-DESTROY"', 'test "$CONFIRMATION" = "DEPLOY-AND-DESTROY"'),
+        ('if [ "$RUN_SMOKE_TEST" != "true" ]', 'if [ "$RUN_SMOKE_TEST" = "false" ]'),
+        ("    steps:\n", "    steps:\n      - uses: aws-actions/configure-aws-credentials@v6.1.0\n"),
+        ("steps.preflight.outputs.profile == 'legacy' && steps.aws_credentials.outcome", "steps.aws_credentials.outcome"),
+        ("always() && steps.preflight.outcome == 'success' && steps.preflight.outputs.profile == 'legacy' && steps.aws_credentials.outcome", "failure() && steps.aws_credentials.outcome"),
+        ("steps.preflight.outputs.profile == 'legacy' && inputs.run_smoke_test", "inputs.run_smoke_test"),
+        ("steps.preflight.outputs.profile == 'legacy' && (inputs.run_smoke_test", "steps.preflight.outputs.profile == 'genai-shell' && (inputs.run_smoke_test"),
+        ("steps.preflight.outcome == 'success' && steps.preflight.outputs.profile == 'legacy' && (inputs.run_smoke_test", "steps.preflight.outputs.profile == 'legacy' && (inputs.run_smoke_test"),
+        ("id: destroy", "id: destroy-late",),
+        ("id: cleanup", "id: cleanup-late",),
+        ("id: evidence", "id: evidence-late",),
+        ("path: evidence/genai-shell-validation.json", "path: evidence/"),
+        ("steps.preflight.outputs.profile == 'legacy' && (inputs.run_smoke_test", "steps.preflight.outputs.profile == 'genai-shell' && (inputs.run_smoke_test"),
+        ("--config /tmp/genai-oauth-curl.conf", '--user "$LOADTESTCLIENTID:$CLIENT_SECRET"'),
+        ("--config /tmp/genai-oauth-curl.conf", '-u "$LOADTESTCLIENTID:$CLIENT_SECRET"'),
+        ("--config /tmp/genai-oauth-curl.conf", '--header "Authorization: Basic synthetic"'),
+        ("          umask 077", "          umask 022"),
+        ("          chmod 600 /tmp/genai-oauth-curl.conf", "          chmod 644 /tmp/genai-oauth-curl.conf"),
+        ("/tmp/genai-oauth-curl.conf /tmp/genai-*", "/tmp/genai-*"),
+        ("outputs_file=\"/tmp/genai-cdk-outputs.json\"", "outputs_file=\"../evidence/cdk-outputs.json\""),
+        ("      - name: Remove GenAI validation temporary files", "      - name: Removed cleanup step"),
+        ("rm -f /tmp/genai-oauth-curl.conf /tmp/client-secret.txt", "rm -f /tmp/genai-oauth-curl.conf"),
+        ('test "$outcome" = "success"', 'test "$outcome" != "failure"'),
+        ("            legacy)", "            legacy-disabled)"),
+    ],
+)
+def test_profile_isolation_guardrail_rejects_regressions(old: str, new: str):
+    mutated = workflow().replace(old, new, 1)
+    assert mutated != workflow()
+    assert validate_deploy_workflow(mutated)
+
+
+def test_profiles_are_mutually_exclusive_and_keep_legacy_routes():
+    content = workflow()
+    assert "default: genai-shell" in content
+    assert "VALIDATE-GENAI-SHELL-AND-DESTROY" in content
+    assert "DEPLOY-AND-DESTROY" in content
+    diagnostics = content.split("- name: Collect asynchronous processor diagnostics", 1)[1]
+    diagnostics = diagnostics.split("- name:", 1)[0]
+    assert "steps.preflight.outcome == 'success'" in diagnostics
+    assert "steps.preflight.outputs.profile == 'legacy'" in diagnostics
+    assert "filter-log-events" in diagnostics
+
+
+def test_genai_artifact_is_sanitized_and_ordered_after_cleanup():
+    content = workflow()
+    assert content.index("id: destroy") < content.index("id: cleanup")
+    assert content.index("id: cleanup") < content.index("id: evidence")
+    assert content.index("id: evidence") < content.index("id: genai_upload")
+    assert content.index("id: genai_upload") < content.index("id: temp_cleanup")
+    upload = content.split("- name: Upload sanitized GenAI shell evidence", 1)[1]
+    upload = upload.split("- name:", 1)[0]
+    assert "path: evidence/genai-shell-validation.json" in upload
+    assert "path: evidence/\n" not in upload
+
+
+def test_oauth_secret_is_not_in_argv_and_has_dual_cleanup():
+    content = workflow()
+    assert "curl --user" not in content
+    assert "curl -u" not in content
+    assert "Authorization: Basic" not in content
+    assert content.count("--config /tmp/genai-oauth-curl.conf") == 2
+    assert "umask 077" in content
+    assert "chmod 600 /tmp/genai-oauth-curl.conf" in content
+    assert "trap cleanup_temporaries EXIT" in content
+    assert "rm -f /tmp/genai-oauth-curl.conf /tmp/client-secret.txt" in content
