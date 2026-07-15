@@ -176,8 +176,67 @@ def _curl_arguments(workflow: str) -> list[str]:
     ]
 
 
-def validate_sensitive_logging_source(source: str) -> list[str]:
+def _validate_masking_allowlist(workflow: str, smoke: str) -> list[str]:
     errors: list[str] = []
+
+    def normalized_lines(content: str) -> list[str]:
+        return [
+            re.sub(r"[ \t]+", " ", line.strip())
+            for line in _normalized_shell(content).splitlines()
+        ]
+
+    generator = (
+        'LOADTESTCLIENTID="$LOADTESTCLIENTID" '
+        "python3 scripts/check_oidc_workflows.py write-oauth-curl-config "
+        "--secret-json /tmp/genai-client-secret.json "
+        "--output /tmp/genai-oauth-curl.conf "
+        "--mask-output /tmp/genai-oauth-mask-values.txt"
+    )
+    cleanup = "rm -f /tmp/genai-oauth-mask-values.txt /tmp/genai-client-secret.json"
+    expected_block = [
+        generator,
+        "mask_count=0",
+        "while IFS= read -r mask_payload; do",
+        'test -n "$mask_payload"',
+        "builtin printf '::add-mask::%s\\n' \"$mask_payload\"",
+        "mask_count=$((mask_count + 1))",
+        "done < /tmp/genai-oauth-mask-values.txt",
+        "unset mask_payload",
+        'test "$mask_count" -eq 2',
+        "unset mask_count",
+        cleanup,
+    ]
+    lines = normalized_lines(smoke)
+    try:
+        start = lines.index(generator)
+        end = lines.index(cleanup, start) + 1
+    except ValueError:
+        errors.append("OAuth masking block must match the exact safe command allowlist")
+    else:
+        actual = [line for line in lines[start:end] if line and not line.startswith("#")]
+        if actual != expected_block:
+            errors.append("OAuth masking block must match the exact safe command allowlist")
+
+    expected_references = [
+        "rm -f /tmp/genai-oauth-mask-values.txt",
+        "rm -f /tmp/.genai-oauth-mask-values.txt.*.tmp",
+        generator,
+        "done < /tmp/genai-oauth-mask-values.txt",
+        cleanup,
+        "rm -f /tmp/genai-oauth-mask-values.txt",
+        "rm -f /tmp/.genai-oauth-mask-values.txt.*.tmp",
+    ]
+    actual_references = [
+        line
+        for line in normalized_lines(workflow)
+        if "genai-oauth-mask-values" in line
+    ]
+    if actual_references != expected_references:
+        errors.append("OAuth mask file references must match the exact safe allowlist")
+    return errors
+
+
+def validate_sensitive_logging_source(source: str) -> list[str]:
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -189,58 +248,309 @@ def validate_sensitive_logging_source(source: str) -> list[str]:
         "credential",
         "authorization",
         "mask_value",
+        "mask_payload",
+        "token",
     )
+    sink_names = {
+        "print",
+        "sys.stdout.write",
+        "sys.stderr.write",
+        "logging.debug",
+        "logging.info",
+        "logging.warning",
+        "logging.warn",
+        "logging.error",
+        "logging.exception",
+        "logging.critical",
+        "warnings.warn",
+        "pprint.pprint",
+        "traceback.print_exc",
+        "traceback.print_exception",
+        "traceback.print_stack",
+        "os.write",
+    }
+    protected_helpers = {
+        "_write_protected_atomic",
+        "write_oauth_curl_config",
+        "escape_github_command_value",
+    }
+    functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    summaries: dict[str, tuple[set[int], set[int]]] = {
+        name: (set(), set()) for name in functions
+    }
 
-    def references_sensitive(node: ast.AST) -> bool:
-        return any(
-            isinstance(item, ast.Name)
-            and any(term in item.id.lower() for term in sensitive_terms)
-            for item in ast.walk(node)
-        )
+    def dotted_name(node: ast.AST) -> str | None:
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            parent = dotted_name(node.value)
+            return f"{parent}.{node.attr}" if parent else None
+        return None
 
-    def output_call(node: ast.Call) -> bool:
-        function = node.func
-        if isinstance(function, ast.Name):
-            return function.id == "print"
-        if not isinstance(function, ast.Attribute):
-            return False
-        chain: list[str] = [function.attr]
-        value = function.value
-        while isinstance(value, ast.Attribute):
-            chain.append(value.attr)
-            value = value.value
-        if isinstance(value, ast.Name):
-            chain.append(value.id)
-        dotted = ".".join(reversed(chain))
-        return dotted in {"sys.stdout.write", "sys.stderr.write"} or dotted in {
-            "logging.debug",
-            "logging.info",
-            "logging.warning",
-            "logging.error",
-            "logging.critical",
-        }
+    def sensitive_name(name: str) -> bool:
+        lowered = name.lower()
+        return any(term in lowered for term in sensitive_terms)
 
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and output_call(node):
-            has_mask_command = any(
-                isinstance(item, ast.Constant)
-                and isinstance(item.value, str)
-                and "::add-mask::" in item.value
-                for argument in node.args
-                for item in ast.walk(argument)
-            )
-            if has_mask_command or any(references_sensitive(arg) for arg in node.args):
-                errors.append("Python helper must not log sensitive OAuth values")
+    def target_names(target: ast.AST) -> set[str]:
+        if isinstance(target, ast.Name):
+            return {target.id}
+        if isinstance(target, (ast.Tuple, ast.List)):
+            return {name for item in target.elts for name in target_names(item)}
+        if isinstance(target, (ast.Attribute, ast.Subscript)):
+            root = target.value
+            while isinstance(root, (ast.Attribute, ast.Subscript)):
+                root = root.value
+            return {root.id} if isinstance(root, ast.Name) else set()
+        return set()
+
+    def call_arguments(call: ast.Call) -> list[ast.AST]:
+        return [*call.args, *(keyword.value for keyword in call.keywords)]
+
+    def sink_name(call: ast.Call, aliases: dict[str, str]) -> str | None:
+        direct = dotted_name(call.func)
+        if direct in aliases:
+            direct = aliases[direct]
+        if direct in sink_names:
+            return direct
         if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "repr"
-            and any(references_sensitive(arg) for arg in node.args)
+            isinstance(call.func, ast.Call)
+            and dotted_name(call.func.func) == "getattr"
+            and len(call.func.args) >= 2
+            and isinstance(call.func.args[1], ast.Constant)
+            and isinstance(call.func.args[1].value, str)
         ):
-            errors.append("Python helper must not render sensitive OAuth values")
-        if isinstance(node, ast.Raise) and node.exc is not None and references_sensitive(node.exc):
-            errors.append("Python helper exceptions must not interpolate sensitive OAuth values")
-    return errors
+            receiver = dotted_name(call.func.args[0])
+            candidate = f"{receiver}.{call.func.args[1].value}"
+            return candidate if candidate in sink_names else None
+        return None
+
+    def analyze_statements(
+        statements: list[ast.stmt],
+        initial_taint: set[str],
+        *,
+        function_name: str | None,
+        record: bool,
+    ) -> tuple[set[str], bool, list[tuple[int, int, str]]]:
+        tainted = set(initial_taint)
+        aliases: dict[str, str] = {}
+        findings: list[tuple[int, int, str]] = []
+        return_tainted = False
+
+        def add(node: ast.AST, message: str) -> None:
+            item = (getattr(node, "lineno", 0), getattr(node, "col_offset", 0), message)
+            if item not in findings:
+                findings.append(item)
+
+        def expr_tainted(node: ast.AST | None) -> bool:
+            if node is None or isinstance(node, ast.Constant):
+                return False
+            if isinstance(node, ast.Name):
+                return node.id in tainted or sensitive_name(node.id)
+            if isinstance(node, ast.Attribute):
+                return sensitive_name(node.attr) or expr_tainted(node.value)
+            if isinstance(node, ast.NamedExpr):
+                value_tainted = expr_tainted(node.value)
+                if value_tainted:
+                    tainted.update(target_names(node.target))
+                return value_tainted
+            if isinstance(node, ast.Call):
+                arguments = call_arguments(node)
+                direct = dotted_name(node.func)
+                if direct and sensitive_name(direct):
+                    return True
+                if direct in summaries and direct in functions:
+                    parameters = list(functions[direct].args.args)
+                    by_name = {item.arg: index for index, item in enumerate(parameters)}
+                    actual: dict[int, ast.AST] = {
+                        index: argument for index, argument in enumerate(node.args)
+                    }
+                    actual.update(
+                        {
+                            by_name[keyword.arg]: keyword.value
+                            for keyword in node.keywords
+                            if keyword.arg in by_name
+                        }
+                    )
+                    return_indices, _ = summaries[direct]
+                    if any(
+                        index in actual and expr_tainted(actual[index])
+                        for index in return_indices
+                    ):
+                        return True
+                return expr_tainted(node.func) or any(expr_tainted(item) for item in arguments)
+            return any(expr_tainted(child) for child in ast.iter_child_nodes(node))
+
+        def visit_statement(statement: ast.stmt) -> None:
+            nonlocal return_tainted
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                return
+            if isinstance(statement, ast.Assign):
+                direct = dotted_name(statement.value)
+                resolved = aliases.get(direct, direct) if direct else None
+                names = {name for target in statement.targets for name in target_names(target)}
+                if resolved in sink_names:
+                    for name in names:
+                        aliases[name] = resolved
+                elif direct in aliases:
+                    for name in names:
+                        aliases[name] = aliases[direct]
+                if expr_tainted(statement.value):
+                    tainted.update(names)
+            elif isinstance(statement, ast.AnnAssign):
+                if expr_tainted(statement.value):
+                    tainted.update(target_names(statement.target))
+            elif isinstance(statement, (ast.For, ast.AsyncFor)):
+                if expr_tainted(statement.iter):
+                    tainted.update(target_names(statement.target))
+            elif isinstance(statement, ast.With):
+                for item in statement.items:
+                    if expr_tainted(item.context_expr) and item.optional_vars:
+                        tainted.update(target_names(item.optional_vars))
+            elif isinstance(statement, ast.Return):
+                return_tainted = return_tainted or expr_tainted(statement.value)
+            elif isinstance(statement, ast.Raise) and statement.exc is not None:
+                if expr_tainted(statement.exc):
+                    add(statement, "Python helper exceptions must not interpolate sensitive OAuth values")
+
+            for node in ast.walk(statement):
+                if not isinstance(node, ast.Call):
+                    continue
+                sink = sink_name(node, aliases)
+                arguments = call_arguments(node)
+                sensitive_output = any(expr_tainted(item) for item in arguments)
+                if sink == "os.write":
+                    fd_sensitive = bool(
+                        node.args
+                        and isinstance(node.args[0], ast.Constant)
+                        and node.args[0].value in {1, 2}
+                    )
+                    sensitive_output = fd_sensitive and any(
+                        expr_tainted(item) for item in node.args[1:]
+                    )
+                if sink and function_name in protected_helpers:
+                    add(node, "Sensitive OAuth helper functions must not emit output")
+                elif sink and sensitive_output:
+                    add(node, "Python helper must not log sensitive OAuth values")
+                if dotted_name(node.func) == "repr" and sensitive_output:
+                    add(node, "Python helper must not render sensitive OAuth values")
+                called_name = dotted_name(node.func) or ""
+                if (
+                    called_name.endswith(("Error", "Exception"))
+                    and sensitive_output
+                ):
+                    add(
+                        node,
+                        "Python helper exceptions must not interpolate sensitive OAuth values",
+                    )
+                called = dotted_name(node.func)
+                if called in summaries and called in functions:
+                    parameters = list(functions[called].args.args)
+                    by_name = {item.arg: index for index, item in enumerate(parameters)}
+                    actual = {index: argument for index, argument in enumerate(node.args)}
+                    actual.update(
+                        {
+                            by_name[keyword.arg]: keyword.value
+                            for keyword in node.keywords
+                            if keyword.arg in by_name
+                        }
+                    )
+                    _, sink_indices = summaries[called]
+                    if any(
+                        index in actual and expr_tainted(actual[index])
+                        for index in sink_indices
+                    ):
+                        add(node, "Python helper must not log sensitive OAuth values")
+
+            for child in ast.iter_child_nodes(statement):
+                if isinstance(child, ast.stmt):
+                    visit_statement(child)
+
+        previous: tuple[frozenset[str], tuple[tuple[str, str], ...]] | None = None
+        while previous != (frozenset(tainted), tuple(sorted(aliases.items()))):
+            previous = (frozenset(tainted), tuple(sorted(aliases.items())))
+            for statement in statements:
+                visit_statement(statement)
+        return tainted, return_tainted, findings if record else findings
+
+    changed = True
+    while changed:
+        changed = False
+        for name, function in functions.items():
+            parameters = list(function.args.args)
+            return_indices: set[int] = set()
+            sink_indices: set[int] = set()
+            for index, parameter in enumerate(parameters):
+                _, returns, findings = analyze_statements(
+                    function.body,
+                    {parameter.arg},
+                    function_name=name,
+                    record=False,
+                )
+                if returns:
+                    return_indices.add(index)
+                if findings:
+                    sink_indices.add(index)
+            summary = (return_indices, sink_indices)
+            if summary != summaries[name]:
+                summaries[name] = summary
+                changed = True
+
+    findings: list[tuple[int, int, str]] = []
+    _, _, module_findings = analyze_statements(
+        tree.body, set(), function_name=None, record=True
+    )
+    findings.extend(module_findings)
+    for name, function in functions.items():
+        _, _, function_findings = analyze_statements(
+            function.body, set(), function_name=name, record=True
+        )
+        findings.extend(function_findings)
+
+    parent: dict[ast.AST, ast.AST] = {
+        child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+    }
+    main = functions.get("main")
+    if main:
+        main_aliases: dict[str, str] = {}
+        main_nodes = sorted(
+            ast.walk(main),
+            key=lambda item: (getattr(item, "lineno", 0), getattr(item, "col_offset", 0)),
+        )
+        for node in main_nodes:
+            if isinstance(node, ast.Assign):
+                direct = dotted_name(node.value)
+                resolved = main_aliases.get(direct, direct) if direct else None
+                if resolved in sink_names:
+                    for target in node.targets:
+                        for name in target_names(target):
+                            main_aliases[name] = resolved
+            if not isinstance(node, ast.Call) or sink_name(node, main_aliases) is None:
+                continue
+            allowed = (
+                dotted_name(node.func) == "print"
+                and len(node.args) == 1
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == "OAuth curl config generation failed"
+                and len(node.keywords) == 1
+                and node.keywords[0].arg == "file"
+                and dotted_name(node.keywords[0].value) == "sys.stderr"
+            )
+            ancestor = parent.get(node)
+            while ancestor is not None and not isinstance(ancestor, ast.ExceptHandler):
+                ancestor = parent.get(ancestor)
+            allowed = allowed and isinstance(ancestor, ast.ExceptHandler) and (
+                dotted_name(ancestor.type) == "OAuthConfigError"
+            )
+            if not allowed:
+                findings.append(
+                    (node.lineno, node.col_offset, "Python helper must not log sensitive OAuth values")
+                )
+
+    return [message for _, _, message in sorted(set(findings))]
 
 
 def _sid_blocks(template: str) -> dict[str, str]:
@@ -543,6 +853,7 @@ def validate_deploy_workflow(workflow: str) -> list[str]:
     )
     require("client_secret" not in lower, "CLIENT_SECRET shell variables are forbidden")
     smoke = by_id.get("genai_smoke", "")
+    errors.extend(_validate_masking_allowlist(workflow, smoke))
     for token, message in {
         "--output json > /tmp/genai-client-secret.json": "client secret must be captured as protected JSON",
         "python3 scripts/check_oidc_workflows.py write-oauth-curl-config": "safe OAuth config subcommand is required",
@@ -598,16 +909,6 @@ def validate_deploy_workflow(workflow: str) -> list[str]:
         -1 < second_oauth_position < config_cleanup_position < token_parse_position,
         "curl config must be removed immediately after OAuth responses",
     )
-    for forbidden_reader in ("cat", "sed", "awk", "xargs", "source", "eval"):
-        require(
-            re.search(
-                rf"(?m)^.*\b{forbidden_reader}\b[^\n]*genai-oauth-mask-values",
-                normalized_smoke,
-            )
-            is None,
-            f"mask values must not be read with {forbidden_reader}",
-        )
-    require("$(< /tmp/genai-oauth-mask-values.txt)" not in normalized_smoke, "mask values must not use command substitution")
     require("export mask_payload" not in normalized_smoke, "mask payload must not be exported")
     require("$GITHUB_ENV" not in smoke and "$GITHUB_OUTPUT" not in smoke, "OAuth mask values must not use GitHub environment files")
     config_lines = [

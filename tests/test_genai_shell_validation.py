@@ -966,6 +966,86 @@ def test_sensitive_logging_ast_guard_rejects_dynamic_outputs(statement: str):
     assert validate_sensitive_logging_source(statement)
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        "value = secret\nprint(value)",
+        "first = secret\nsecond = first\nprint(second)",
+        'payload = {"value": secret}\nprint(payload["value"])',
+        "(value,) = (secret,)\nprint(value)",
+        "print(value := secret)",
+        'value = f"{secret}"\nsys.stderr.write(value)',
+        'value = "{}".format(secret)\nlogging.error(value)',
+        'value = "%s" % secret\nwarnings.warn(value)',
+        "emit = print\nemit(secret)",
+        "writer = sys.stdout.write\nwriter(secret)",
+        "logger = logging.exception\nlogger(secret)",
+        "first = print\nsecond = first\nsecond(secret)",
+        'getattr(sys.stderr, "write")(secret)',
+        'getattr(logging, "error")(secret)',
+        "def emit(value):\n    print(value)\n\nemit(secret)",
+        'def prepare(value):\n    return f"{value}"\n\nresult = prepare(secret)\nprint(result)',
+        "def intermediate(value):\n    other = value\n    return other\n\nprint(intermediate(secret))",
+        "pprint.pprint(secret)",
+        "os.write(1, secret.encode())",
+        'raise OAuthConfigError(f"{secret}")',
+        "error = RuntimeError(secret)",
+        "message = secret\nraise RuntimeError(message)",
+        "repr(secret)",
+    ],
+)
+def test_sensitive_logging_taint_guard_rejects_derived_outputs(source: str):
+    errors = validate_sensitive_logging_source(source)
+    assert errors
+    assert all("sensitive OAuth" in error or "Sensitive OAuth" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'print("OIDC workflow guardrails passed")',
+        'message = "secret is a word, not data"',
+        "ordinary = value\nresult = ordinary",
+        'raise OAuthConfigError("OAuth credential input is invalid")',
+    ],
+)
+def test_sensitive_logging_taint_guard_accepts_safe_code(source: str):
+    assert validate_sensitive_logging_source(source) == []
+
+
+@pytest.mark.parametrize(
+    "sink",
+    [
+        'print("constant")',
+        'warnings.warn("constant")',
+        "traceback.print_exc()",
+        'sys.stderr.write("constant")',
+    ],
+)
+def test_sensitive_helpers_reject_every_output_sink(sink: str):
+    source = f"def write_oauth_curl_config():\n    {sink}\n"
+    assert validate_sensitive_logging_source(source) == [
+        "Sensitive OAuth helper functions must not emit output"
+    ]
+
+
+def test_oauth_cli_rejects_constant_output_outside_sanitized_error_handler():
+    source = (
+        "def main():\n"
+        '    print("OAuth curl config generation failed", file=sys.stderr)\n'
+    )
+    assert validate_sensitive_logging_source(source) == [
+        "Python helper must not log sensitive OAuth values"
+    ]
+
+
+def test_oauth_cli_rejects_aliased_output_sink():
+    source = "def main():\n    emit = print\n    emit(\"constant\")\n"
+    assert validate_sensitive_logging_source(source) == [
+        "Python helper must not log sensitive OAuth values"
+    ]
+
+
 def test_oauth_cli_error_is_constant_and_contains_no_sensitive_data(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ):
@@ -1022,52 +1102,78 @@ def test_guardrail_rejects_weakened_masking_controls(
 
 
 @pytest.mark.parametrize(
-    ("injection", "message"),
+    "injection",
     [
-        (
-            "          cat /tmp/genai-oauth-mask-values.txt\n",
-            "must not be read with cat",
-        ),
-        (
-            "          value=$(< /tmp/genai-oauth-mask-values.txt)\n",
-            "command substitution",
-        ),
-        (
-            "          source /tmp/genai-oauth-mask-values.txt\n",
-            "must not be read with source",
-        ),
-        (
-            "          xargs echo < /tmp/genai-oauth-mask-values.txt\n",
-            "must not be read with xargs",
-        ),
-        (
-            "          sed -n 1p /tmp/genai-oauth-mask-values.txt\n",
-            "must not be read with sed",
-        ),
-        (
-            "          awk '{print}' /tmp/genai-oauth-mask-values.txt\n",
-            "must not be read with awk",
-        ),
-        (
-            "          eval \"$(< /tmp/genai-oauth-mask-values.txt)\"\n",
-            "must not be read with eval",
-        ),
-        (
-            '          echo "mask=$mask_payload" >> "$GITHUB_ENV"\n',
-            "GitHub environment files",
-        ),
-        (
-            '          echo "mask=$mask_payload" >> "$GITHUB_OUTPUT"\n',
-            "GitHub environment files",
-        ),
+        "          cat /tmp/genai-oauth-mask-values.txt\n",
+        "          value=$(< /tmp/genai-oauth-mask-values.txt)\n",
+        "          source /tmp/genai-oauth-mask-values.txt\n",
+        "          xargs echo < /tmp/genai-oauth-mask-values.txt\n",
+        "          sed -n 1p /tmp/genai-oauth-mask-values.txt\n",
+        "          awk '{print}' /tmp/genai-oauth-mask-values.txt\n",
+        "          eval \"$(< /tmp/genai-oauth-mask-values.txt)\"\n",
+        '          echo "mask=$mask_payload" >> "$GITHUB_ENV"\n',
+        '          echo "mask=$mask_payload" >> "$GITHUB_OUTPUT"\n',
     ],
 )
 def test_guardrail_rejects_external_mask_readers_and_environment_files(
-    injection: str, message: str
+    injection: str,
 ):
     mutated = workflow().replace("          mask_count=0\n", injection + "          mask_count=0\n", 1)
     errors = validate_deploy_workflow(mutated)
-    assert any(message in error for error in errors)
+    assert any("exact safe" in error or "exact safe allowlist" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "head /tmp/genai-oauth-mask-values.txt",
+        "tail /tmp/genai-oauth-mask-values.txt",
+        "cp /tmp/genai-oauth-mask-values.txt /tmp/copy",
+        "install /tmp/genai-oauth-mask-values.txt /tmp/copy",
+        "tee /tmp/copy < /tmp/genai-oauth-mask-values.txt",
+        "dd if=/tmp/genai-oauth-mask-values.txt",
+        "base64 /tmp/genai-oauth-mask-values.txt",
+        "python3 -c 'open(\"/tmp/genai-oauth-mask-values.txt\")'",
+        "perl -ne 'print' /tmp/genai-oauth-mask-values.txt",
+        "ruby -e 'File.read(ARGV[0])' /tmp/genai-oauth-mask-values.txt",
+        "openssl base64 -in /tmp/genai-oauth-mask-values.txt",
+        "readarray values < /tmp/genai-oauth-mask-values.txt",
+        "mapfile values < /tmp/genai-oauth-mask-values.txt",
+        "exec 3< /tmp/genai-oauth-mask-values.txt",
+        "while read -r other; do :; done < /tmp/genai-oauth-mask-values.txt",
+        "value=$(< /tmp/genai-oauth-mask-values.txt)",
+        "while read -r other; do :; done < <(grep . /tmp/genai-oauth-mask-values.txt)",
+        "grep . /tmp/genai-oauth-mask-values.txt | builtin printf '%s\\n'",
+        "run_external_reader",
+        "MASK_FILE=/tmp/genai-oauth-mask-values.txt",
+        "ls -l /tmp/genai-oauth-mask-values*",
+    ],
+)
+def test_masking_block_allowlist_rejects_every_additional_command(command: str):
+    marker = "          mask_count=0\n"
+    mutated = workflow().replace(marker, f"          {command}\n{marker}", 1)
+    assert marker in mutated
+    errors = validate_deploy_workflow(mutated)
+    assert "OAuth masking block must match the exact safe command allowlist" in errors
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        "MASK_FILE=/tmp/genai-oauth-mask-values.txt",
+        "echo /tmp/genai-oauth-mask-values.txt >> $GITHUB_OUTPUT",
+        "echo /tmp/genai-oauth-mask-values.txt >> $GITHUB_ENV",
+        "python3 -c 'open(\"/tmp/genai-oauth-mask-values.txt\")'",
+        "while read -r x; do :; done < /tmp/genai-oauth-mask-values.txt",
+        "artifact_path=/tmp/genai-oauth-mask-values.txt",
+    ],
+)
+def test_mask_file_reference_allowlist_rejects_uses_outside_masking_block(
+    reference: str,
+):
+    mutated = workflow() + f"\n# synthetic step mutation\n{reference}\n"
+    errors = validate_deploy_workflow(mutated)
+    assert "OAuth mask file references must match the exact safe allowlist" in errors
 
 
 def test_guardrail_rejects_missing_immediate_sensitive_file_cleanup():
