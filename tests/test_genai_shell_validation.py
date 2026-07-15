@@ -24,6 +24,7 @@ from scripts.check_oidc_workflows import (
     main as oidc_main,
     validate_bootstrap_policy,
     validate_deploy_workflow,
+    validate_sensitive_logging_source,
     write_oauth_curl_config,
 )
 
@@ -671,15 +672,17 @@ def test_oauth_config_encodes_adversarial_values_as_data(
 ):
     secret_json = tmp_path / "secret.json"
     output = tmp_path / "curl.conf"
+    mask_output = tmp_path / "mask-values.txt"
     secret_json.write_text(json.dumps(secret), encoding="utf-8")
 
-    returned_secret, basic = write_oauth_curl_config(
+    assert write_oauth_curl_config(
         secret_json=secret_json,
         output=output,
+        mask_output=mask_output,
         client_id=client_id,
-    )
+    ) is None
 
-    assert returned_secret == secret
+    basic = base64.b64encode(f"{client_id}:{secret}".encode("utf-8")).decode("ascii")
     assert stat.S_IMODE(output.stat().st_mode) == 0o600
     rendered = output.read_text(encoding="ascii")
     assert rendered == f'header = "Authorization: Basic {basic}"\n'
@@ -691,6 +694,12 @@ def test_oauth_config_encodes_adversarial_values_as_data(
         directive in rendered
         for directive in ('X-Injected: yes', 'url = "', 'proxy = "')
     )
+    assert stat.S_IMODE(mask_output.stat().st_mode) == 0o600
+    assert mask_output.read_text(encoding="utf-8").splitlines() == [
+        escape_github_command_value(secret),
+        escape_github_command_value(basic),
+    ]
+    assert mask_output.read_bytes().endswith(b"\n")
 
 
 def test_oauth_cli_masks_secret_and_basic_with_workflow_escaping(
@@ -700,6 +709,7 @@ def test_oauth_cli_masks_secret_and_basic_with_workflow_escaping(
     secret = "secret%\r\n雪"
     secret_json = tmp_path / "secret.json"
     output = tmp_path / "curl.conf"
+    mask_output = tmp_path / "mask-values.txt"
     secret_json.write_text(json.dumps(secret), encoding="utf-8")
     monkeypatch.setenv("LOADTESTCLIENTID", client_id)
 
@@ -710,17 +720,21 @@ def test_oauth_cli_masks_secret_and_basic_with_workflow_escaping(
             str(secret_json),
             "--output",
             str(output),
+            "--mask-output",
+            str(mask_output),
         ]
     ) == 0
 
     basic = base64.b64encode(f"{client_id}:{secret}".encode("utf-8")).decode("ascii")
     captured = capsys.readouterr()
     assert captured.err == ""
-    assert captured.out.splitlines() == [
-        f"::add-mask::{escape_github_command_value(secret)}",
-        f"::add-mask::{basic}",
+    assert captured.out == ""
+    assert secret not in captured.out and basic not in captured.out and client_id not in captured.out
+    assert "::add-mask::" not in captured.out
+    assert mask_output.read_text(encoding="utf-8").splitlines() == [
+        escape_github_command_value(secret),
+        basic,
     ]
-    assert "\r" not in captured.out and "\n" not in captured.out.replace("\n", "")
 
 
 @pytest.mark.parametrize(
@@ -738,15 +752,18 @@ def test_oauth_config_rejects_invalid_inputs_without_leaking(
 ):
     secret_json = tmp_path / "secret.json"
     output = tmp_path / "curl.conf"
+    mask_output = tmp_path / "mask-values.txt"
     secret_json.write_text(raw_json, encoding="utf-8")
     with pytest.raises(OAuthConfigError) as captured:
         write_oauth_curl_config(
             secret_json=secret_json,
             output=output,
+            mask_output=mask_output,
             client_id=client_id,
         )
     assert "sensitive-marker" not in str(captured.value)
     assert not output.exists()
+    assert not mask_output.exists()
     assert not list(tmp_path.glob(".curl.conf.*.tmp"))
 
 
@@ -756,10 +773,12 @@ def test_oauth_config_rejects_missing_output_directory_without_partial_file(
     secret_json = tmp_path / "secret.json"
     secret_json.write_text(json.dumps("synthetic-secret"), encoding="utf-8")
     output = tmp_path / "missing" / "curl.conf"
+    mask_output = tmp_path / "missing" / "mask-values.txt"
     with pytest.raises(OAuthConfigError, match="could not be written"):
         write_oauth_curl_config(
             secret_json=secret_json,
             output=output,
+            mask_output=mask_output,
             client_id="synthetic-client",
         )
     assert not output.exists()
@@ -768,11 +787,13 @@ def test_oauth_config_rejects_missing_output_directory_without_partial_file(
 def test_oauth_config_rejects_non_utf8_surrogate_without_leaking(tmp_path: Path):
     secret_json = tmp_path / "secret.json"
     output = tmp_path / "curl.conf"
+    mask_output = tmp_path / "mask-values.txt"
     secret_json.write_text('"\\ud800sensitive-marker"', encoding="utf-8")
     with pytest.raises(OAuthConfigError) as captured:
         write_oauth_curl_config(
             secret_json=secret_json,
             output=output,
+            mask_output=mask_output,
             client_id="synthetic-client",
         )
     assert "sensitive-marker" not in str(captured.value)
@@ -784,6 +805,7 @@ def test_oauth_config_removes_atomic_temporary_after_replace_failure(
 ):
     secret_json = tmp_path / "secret.json"
     output = tmp_path / "curl.conf"
+    mask_output = tmp_path / "mask-values.txt"
     secret_json.write_text(json.dumps("synthetic-secret"), encoding="utf-8")
 
     def fail_replace(source: str, destination: Path) -> None:
@@ -794,6 +816,7 @@ def test_oauth_config_removes_atomic_temporary_after_replace_failure(
         write_oauth_curl_config(
             secret_json=secret_json,
             output=output,
+            mask_output=mask_output,
             client_id="synthetic-client",
         )
     assert not output.exists()
@@ -884,3 +907,203 @@ def test_guardrail_rejects_config_write_appended_to_safe_generator_line():
     )
     errors = validate_deploy_workflow(mutated)
     assert any("direct shell writes" in error for error in errors)
+
+
+def test_oauth_config_removes_both_outputs_when_mask_replace_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    secret_json = tmp_path / "secret.json"
+    output = tmp_path / "curl.conf"
+    mask_output = tmp_path / "mask-values.txt"
+    secret_json.write_text(json.dumps("synthetic-secret"), encoding="utf-8")
+    real_replace = os.replace
+    calls = 0
+
+    def fail_second_replace(source: str, destination: Path) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("synthetic failure")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", fail_second_replace)
+    with pytest.raises(OAuthConfigError, match="could not be written"):
+        write_oauth_curl_config(
+            secret_json=secret_json,
+            output=output,
+            mask_output=mask_output,
+            client_id="synthetic-client",
+        )
+    assert not output.exists()
+    assert not mask_output.exists()
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_real_python_helper_has_no_sensitive_logging_calls():
+    source = (ROOT / "scripts" / "check_oidc_workflows.py").read_text(
+        encoding="utf-8"
+    )
+    assert validate_sensitive_logging_source(source) == []
+    assert 'print(f"::add-mask::' not in source
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "print(secret)",
+        "print(basic)",
+        "print(client_id)",
+        'print(f"::add-mask::{mask_value}")',
+        "sys.stdout.write(credentials)",
+        "sys.stderr.write(authorization)",
+        "logging.info(secret)",
+        "logging.error(basic)",
+        "repr(secret)",
+        'raise RuntimeError(f"failed: {secret}")',
+    ],
+)
+def test_sensitive_logging_ast_guard_rejects_dynamic_outputs(statement: str):
+    assert validate_sensitive_logging_source(statement)
+
+
+def test_oauth_cli_error_is_constant_and_contains_no_sensitive_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    marker = "do-not-log-sensitive-marker"
+    secret_json = tmp_path / "secret.json"
+    secret_json.write_text(marker, encoding="utf-8")
+    monkeypatch.setenv("LOADTESTCLIENTID", marker)
+    assert oidc_main(
+        [
+            "write-oauth-curl-config",
+            "--secret-json",
+            str(secret_json),
+            "--output",
+            str(tmp_path / "curl.conf"),
+            "--mask-output",
+            str(tmp_path / "mask-values.txt"),
+        ]
+    ) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "OAuth curl config generation failed\n"
+    assert marker not in captured.err
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "message"),
+    [
+        (
+            "              --mask-output /tmp/genai-oauth-mask-values.txt",
+            "              # mask output removed",
+            "protected mask values",
+        ),
+        (
+            "--mask-output /tmp/genai-oauth-mask-values.txt",
+            "--mask-output genai-oauth-mask-values.txt",
+            "protected mask values",
+        ),
+        (
+            "builtin printf '::add-mask::%s\\n'",
+            "printf '::add-mask::%s\\n'",
+            "builtin printf",
+        ),
+        ('test "$mask_count" -eq 2', 'test "$mask_count" -eq 1', "exactly two"),
+        ("unset mask_payload", "echo mask retained", "unset"),
+    ],
+)
+def test_guardrail_rejects_weakened_masking_controls(
+    old: str, new: str, message: str
+):
+    mutated = workflow().replace(old, new, 1)
+    assert mutated != workflow()
+    errors = validate_deploy_workflow(mutated)
+    assert any(message in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    ("injection", "message"),
+    [
+        (
+            "          cat /tmp/genai-oauth-mask-values.txt\n",
+            "must not be read with cat",
+        ),
+        (
+            "          value=$(< /tmp/genai-oauth-mask-values.txt)\n",
+            "command substitution",
+        ),
+        (
+            "          source /tmp/genai-oauth-mask-values.txt\n",
+            "must not be read with source",
+        ),
+        (
+            "          xargs echo < /tmp/genai-oauth-mask-values.txt\n",
+            "must not be read with xargs",
+        ),
+        (
+            "          sed -n 1p /tmp/genai-oauth-mask-values.txt\n",
+            "must not be read with sed",
+        ),
+        (
+            "          awk '{print}' /tmp/genai-oauth-mask-values.txt\n",
+            "must not be read with awk",
+        ),
+        (
+            "          eval \"$(< /tmp/genai-oauth-mask-values.txt)\"\n",
+            "must not be read with eval",
+        ),
+        (
+            '          echo "mask=$mask_payload" >> "$GITHUB_ENV"\n',
+            "GitHub environment files",
+        ),
+        (
+            '          echo "mask=$mask_payload" >> "$GITHUB_OUTPUT"\n',
+            "GitHub environment files",
+        ),
+    ],
+)
+def test_guardrail_rejects_external_mask_readers_and_environment_files(
+    injection: str, message: str
+):
+    mutated = workflow().replace("          mask_count=0\n", injection + "          mask_count=0\n", 1)
+    errors = validate_deploy_workflow(mutated)
+    assert any(message in error for error in errors)
+
+
+def test_guardrail_rejects_missing_immediate_sensitive_file_cleanup():
+    mutated = workflow().replace(
+        "          rm -f /tmp/genai-oauth-mask-values.txt /tmp/genai-client-secret.json\n",
+        "          echo sensitive files retained\n",
+        1,
+    )
+    errors = validate_deploy_workflow(mutated)
+    assert any("before OAuth" in error for error in errors)
+
+
+def test_guardrail_rejects_missing_immediate_curl_config_cleanup():
+    mutated = workflow().replace(
+        "          rm -f /tmp/genai-oauth-curl.conf\n          FULL_TOKEN=",
+        "          echo curl config retained\n          FULL_TOKEN=",
+        1,
+    )
+    errors = validate_deploy_workflow(mutated)
+    assert any("immediately after OAuth" in error for error in errors)
+
+
+def test_guardrail_rejects_mask_file_missing_from_trap():
+    mutated = workflow().replace(
+        "            rm -f /tmp/genai-oauth-mask-values.txt\n",
+        "            echo mask file retained\n",
+        1,
+    )
+    errors = validate_deploy_workflow(mutated)
+    assert any("trap must remove mask" in error for error in errors)
+
+
+def test_guardrail_rejects_mask_file_missing_from_final_cleanup():
+    marker = "          rm -f /tmp/genai-oauth-mask-values.txt\n"
+    before, separator, after = workflow().rpartition(marker)
+    assert separator
+    mutated = before + "          echo final mask retained\n" + after
+    errors = validate_deploy_workflow(mutated)
+    assert any("final cleanup must remove mask" in error for error in errors)

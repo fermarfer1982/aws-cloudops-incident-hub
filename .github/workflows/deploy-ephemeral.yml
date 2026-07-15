@@ -239,7 +239,9 @@ jobs:
           set -euo pipefail
           cleanup_temporaries() {
             rm -f /tmp/genai-oauth-curl.conf /tmp/genai-client-secret.json
+            rm -f /tmp/genai-oauth-mask-values.txt
             rm -f /tmp/.genai-oauth-curl.conf.*.tmp
+            rm -f /tmp/.genai-oauth-mask-values.txt.*.tmp
             rm -f /tmp/cloudops-full-token.json /tmp/cloudops-partial-token.json
             rm -f /tmp/genai-cdk-outputs.json /tmp/genai-outputs.env
             rm -f /tmp/genai-event.json /tmp/genai-create-response.json
@@ -275,7 +277,19 @@ jobs:
           LOADTESTCLIENTID="$LOADTESTCLIENTID" \
             python3 scripts/check_oidc_workflows.py write-oauth-curl-config \
               --secret-json /tmp/genai-client-secret.json \
-              --output /tmp/genai-oauth-curl.conf
+              --output /tmp/genai-oauth-curl.conf \
+              --mask-output /tmp/genai-oauth-mask-values.txt
+
+          mask_count=0
+          while IFS= read -r mask_payload; do
+            test -n "$mask_payload"
+            builtin printf '::add-mask::%s\n' "$mask_payload"
+            mask_count=$((mask_count + 1))
+          done < /tmp/genai-oauth-mask-values.txt
+          unset mask_payload
+          test "$mask_count" -eq 2
+          unset mask_count
+          rm -f /tmp/genai-oauth-mask-values.txt /tmp/genai-client-secret.json
 
           FULL_SCOPES="cloudops-incident-hub/incidents.read cloudops-incident-hub/incidents.write cloudops-incident-hub/incidents.summarize"
           PARTIAL_SCOPES="cloudops-incident-hub/incidents.read cloudops-incident-hub/incidents.write"
@@ -291,6 +305,7 @@ jobs:
             --data-urlencode "grant_type=client_credentials" \
             --data-urlencode "scope=$PARTIAL_SCOPES" \
             "$LOADTESTTOKENURL" > /tmp/cloudops-partial-token.json
+          rm -f /tmp/genai-oauth-curl.conf
           FULL_TOKEN=$(python -c 'import json; print(json.load(open("/tmp/cloudops-full-token.json"))["access_token"])')
           PARTIAL_TOKEN=$(python -c 'import json; print(json.load(open("/tmp/cloudops-partial-token.json"))["access_token"])')
           test -n "$FULL_TOKEN"
@@ -944,7 +959,9 @@ jobs:
         if: always() && steps.preflight.outcome == 'success' && steps.preflight.outputs.profile == 'genai-shell'
         run: |
           rm -f /tmp/genai-oauth-curl.conf /tmp/genai-client-secret.json
+          rm -f /tmp/genai-oauth-mask-values.txt
           rm -f /tmp/.genai-oauth-curl.conf.*.tmp
+          rm -f /tmp/.genai-oauth-mask-values.txt.*.tmp
           rm -f /tmp/cloudops-full-token.json /tmp/cloudops-partial-token.json
           rm -f /tmp/genai-cdk-outputs.json /tmp/genai-outputs.env
           rm -f /tmp/genai-event.json /tmp/genai-create-response.json
