@@ -13,10 +13,16 @@ from aws_cdk import aws_sns as sns
 from aws_cdk import aws_sns_subscriptions as subscriptions
 
 TABLE_IDS = ("IncidentsTable", "IncidentMetricsTable")
-LOG_GROUP_IDS = ("ApiFunctionLogGroup", "ProcessorFunctionLogGroup")
+LOG_GROUP_IDS = (
+    "ApiFunctionLogGroup",
+    "ProcessorFunctionLogGroup",
+    "GenAiSummaryFunctionLogGroup",
+)
 ALARM_IDS = (
     "ApiFunctionErrorsAlarm",
     "ProcessorFunctionErrorsAlarm",
+    "GenAiSummaryFunctionErrorsAlarm",
+    "GenAiSummaryFunctionThrottlesAlarm",
     "ProcessingQueueAgeAlarm",
     "ProcessingDlqMessagesAlarm",
 )

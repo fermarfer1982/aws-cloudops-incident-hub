@@ -68,7 +68,7 @@ def test_persistent_mode_enables_pitr_retains_tables_and_keeps_logs_for_30_days(
         for table in tables
     )
 
-    assert len(log_groups) == 2
+    assert len(log_groups) == 3
     assert all(log_group["DeletionPolicy"] == "Retain" for log_group in log_groups)
     assert all(log_group["UpdateReplacePolicy"] == "Retain" for log_group in log_groups)
     assert all(log_group["Properties"]["RetentionInDays"] == 30 for log_group in log_groups)
@@ -93,7 +93,7 @@ def test_alarm_email_creates_sns_subscription_and_routes_alarm_and_ok_states():
         for resource in resources.values()
         if resource["Type"] == "AWS::CloudWatch::Alarm"
     ]
-    assert len(alarms) == 4
+    assert len(alarms) == 6
     assert all(len(alarm.get("AlarmActions", [])) == 1 for alarm in alarms)
     assert all(len(alarm.get("OKActions", [])) == 1 for alarm in alarms)
     template.has_output("OperationsAlarmTopicArn", {"Value": Match.any_value()})
@@ -185,7 +185,7 @@ def test_slack_creates_notification_only_chatops_configuration():
         if resource["Type"] == "AWS::CloudWatch::Alarm"
     ]
 
-    assert len(alarms) == 4
+    assert len(alarms) == 6
     assert all(
         len(alarm.get("AlarmActions", [])) == 1
         for alarm in alarms
