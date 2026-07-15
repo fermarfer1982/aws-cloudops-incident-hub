@@ -238,8 +238,16 @@ jobs:
         run: |
           set -euo pipefail
           cleanup_temporaries() {
-            rm -f /tmp/genai-oauth-curl.conf /tmp/genai-* \
-              /tmp/cloudops-*-token.json /tmp/client-secret.txt
+            rm -f /tmp/genai-oauth-curl.conf /tmp/genai-client-secret.json
+            rm -f /tmp/.genai-oauth-curl.conf.*.tmp
+            rm -f /tmp/cloudops-full-token.json /tmp/cloudops-partial-token.json
+            rm -f /tmp/genai-cdk-outputs.json /tmp/genai-outputs.env
+            rm -f /tmp/genai-event.json /tmp/genai-create-response.json
+            rm -f /tmp/genai-incidents.json /tmp/genai-summary-request.json
+            rm -f /tmp/genai-authenticated-headers.txt
+            rm -f /tmp/genai-authenticated-body.json
+            rm -f /tmp/genai-unauthenticated-body.txt
+            rm -f /tmp/genai-wrong-scope-body.txt /tmp/genai-log-metric.json
           }
           trap cleanup_temporaries EXIT
 
@@ -258,21 +266,16 @@ jobs:
           PY
           source /tmp/genai-outputs.env
 
+          umask 077
           aws cognito-idp describe-user-pool-client \
             --user-pool-id "$USERPOOLID" \
             --client-id "$LOADTESTCLIENTID" \
             --query 'UserPoolClient.ClientSecret' \
-            --output text > /tmp/client-secret.txt
-          CLIENT_SECRET=$(< /tmp/client-secret.txt)
-          test -n "$CLIENT_SECRET"
-          test "$CLIENT_SECRET" != "None"
-          echo "::add-mask::$CLIENT_SECRET"
-
-          OAUTH_CURL_CONFIG=/tmp/genai-oauth-curl.conf
-          umask 077
-          printf 'user = "%s:%s"\n' \
-            "$LOADTESTCLIENTID" "$CLIENT_SECRET" > "$OAUTH_CURL_CONFIG"
-          chmod 600 /tmp/genai-oauth-curl.conf
+            --output json > /tmp/genai-client-secret.json
+          LOADTESTCLIENTID="$LOADTESTCLIENTID" \
+            python3 scripts/check_oidc_workflows.py write-oauth-curl-config \
+              --secret-json /tmp/genai-client-secret.json \
+              --output /tmp/genai-oauth-curl.conf
 
           FULL_SCOPES="cloudops-incident-hub/incidents.read cloudops-incident-hub/incidents.write cloudops-incident-hub/incidents.summarize"
           PARTIAL_SCOPES="cloudops-incident-hub/incidents.read cloudops-incident-hub/incidents.write"
@@ -940,7 +943,8 @@ jobs:
         id: temp_cleanup
         if: always() && steps.preflight.outcome == 'success' && steps.preflight.outputs.profile == 'genai-shell'
         run: |
-          rm -f /tmp/genai-oauth-curl.conf /tmp/client-secret.txt
+          rm -f /tmp/genai-oauth-curl.conf /tmp/genai-client-secret.json
+          rm -f /tmp/.genai-oauth-curl.conf.*.tmp
           rm -f /tmp/cloudops-full-token.json /tmp/cloudops-partial-token.json
           rm -f /tmp/genai-cdk-outputs.json /tmp/genai-outputs.env
           rm -f /tmp/genai-event.json /tmp/genai-create-response.json

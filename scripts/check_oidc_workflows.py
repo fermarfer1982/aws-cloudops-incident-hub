@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
+import base64
+import json
+import os
 import re
+import sys
+import tempfile
 from pathlib import Path
 
 
@@ -9,6 +15,63 @@ ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / ".github/workflows/deploy-ephemeral.yml"
 DESTROY = ROOT / ".github/workflows/destroy-ephemeral.yml"
 BOOTSTRAP = ROOT / "bootstrap/github-oidc-role.yml"
+
+
+class OAuthConfigError(RuntimeError):
+    """A stable error that never includes credential material."""
+
+
+def escape_github_command_value(value: str) -> str:
+    return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def write_oauth_curl_config(
+    *, secret_json: Path, output: Path, client_id: str | None
+) -> tuple[str, str]:
+    try:
+        raw_secret = secret_json.read_text(encoding="utf-8")
+        secret = json.loads(raw_secret)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise OAuthConfigError("OAuth credential input is invalid") from exc
+    if not isinstance(client_id, str) or not client_id:
+        raise OAuthConfigError("OAuth client ID is unavailable")
+    if not isinstance(secret, str) or not secret:
+        raise OAuthConfigError("OAuth client secret is invalid")
+
+    try:
+        basic = base64.b64encode(
+            f"{client_id}:{secret}".encode("utf-8")
+        ).decode("ascii")
+    except UnicodeError as exc:
+        raise OAuthConfigError("OAuth credentials are not valid UTF-8 data") from exc
+    content = f'header = "Authorization: Basic {basic}"\n'.encode("ascii")
+    descriptor = -1
+    temporary: str | None = None
+    try:
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=f".{output.name}.",
+            suffix=".tmp",
+            dir=output.parent,
+        )
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            descriptor = -1
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, output)
+        temporary = None
+        os.chmod(output, 0o600, follow_symlinks=False)
+    except (OSError, ValueError) as exc:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+        raise OAuthConfigError("OAuth curl config could not be written") from exc
+    return secret, basic
 
 
 def _contains_automatic_trigger(workflow: str) -> bool:
@@ -79,6 +142,21 @@ def _profile_condition(block: str, profile: str) -> bool:
         "steps.preflight.outcome == 'success'" in condition
         and f"steps.preflight.outputs.profile == '{profile}'" in condition
     )
+
+
+def _normalized_shell(workflow: str) -> str:
+    return re.sub(r"\\\r?\n[ \t]*", " ", workflow)
+
+
+def _curl_arguments(workflow: str) -> list[str]:
+    normalized = _normalized_shell(workflow)
+    return [
+        match.group(1)
+        for match in re.finditer(
+            r"(?m)(?:^|[($;])\s*curl\s+([^\n]*)",
+            normalized,
+        )
+    ]
 
 
 def _sid_blocks(template: str) -> dict[str, str]:
@@ -164,7 +242,7 @@ def validate_deploy_workflow(workflow: str) -> list[str]:
         "cancel-in-progress: false": "concurrent executions must not be cancelled",
         "aws-actions/configure-aws-credentials@v6.1.0": "OIDC credential action is required",
         "required reviewers": "required-reviewer governance warning is required",
-        "::add-mask::$CLIENT_SECRET": "client secret must be masked",
+        "write-oauth-curl-config": "safe OAuth credential generator is required",
         "::add-mask::$FULL_TOKEN": "full token must be masked",
         "::add-mask::$PARTIAL_TOKEN": "partial token must be masked",
         "cloudops-incident-hub/incidents.read cloudops-incident-hub/incidents.write cloudops-incident-hub/incidents.summarize": "full token scopes are incomplete",
@@ -365,27 +443,67 @@ def validate_deploy_workflow(workflow: str) -> list[str]:
     )
 
     lower = workflow.lower()
-    require("curl --user" not in lower, "curl --user is forbidden globally")
+    curl_arguments = _curl_arguments(workflow)
+    for arguments in curl_arguments:
+        require(
+            re.search(r"(?:^|\s)--user(?=$|[=\s])", arguments) is None,
+            "curl --user is forbidden globally",
+        )
+        require(
+            re.search(r"(?:^|\s)-u(?:$|\s|\S+)", arguments) is None,
+            "curl -u and attached -uVALUE are forbidden globally",
+        )
     require(
-        re.search(r"(?m)^\s*(?:curl\s+)?-u(?:\s|$)", lower) is None,
-        "curl -u is forbidden globally",
+        re.search(r"authorization\s*:\s*basic", _normalized_shell(lower)) is None,
+        "Basic Authorization must not be constructed in workflow shell",
     )
-    require("authorization: basic" not in lower, "Basic Authorization must not be passed in argv")
+    require("client_secret" not in lower, "CLIENT_SECRET shell variables are forbidden")
     smoke = by_id.get("genai_smoke", "")
     for token, message in {
-        "OAUTH_CURL_CONFIG=/tmp/genai-oauth-curl.conf": "temporary curl config is required",
+        "--output json > /tmp/genai-client-secret.json": "client secret must be captured as protected JSON",
+        "python3 scripts/check_oidc_workflows.py write-oauth-curl-config": "safe OAuth config subcommand is required",
+        "--secret-json /tmp/genai-client-secret.json": "safe subcommand must read the temporary secret JSON",
+        "--output /tmp/genai-oauth-curl.conf": "safe subcommand must write the temporary curl config",
         "umask 077": "curl config requires restrictive umask",
-        "chmod 600 /tmp/genai-oauth-curl.conf": "curl config requires mode 600",
         "--config /tmp/genai-oauth-curl.conf": "OAuth calls must use curl config",
         "trap cleanup_temporaries EXIT": "OAuth config requires trap cleanup",
         "rm -f /tmp/genai-oauth-curl.conf": "OAuth config must be removed by the trap",
+        "rm -f /tmp/genai-oauth-curl.conf /tmp/genai-client-secret.json": "secret JSON must be removed by the trap",
     }.items():
         require(token in smoke, message)
     require(smoke.count("--config /tmp/genai-oauth-curl.conf") == 2, "both OAuth calls must use curl config")
     require("/tmp/genai-oauth-curl.conf" in temp_cleanup_block, "final cleanup must remove curl config")
+    require(
+        "rm -f /tmp/genai-oauth-curl.conf /tmp/genai-client-secret.json" in temp_cleanup_block,
+        "final cleanup must remove secret JSON",
+    )
+    config_lines = [
+        line
+        for line in _normalized_shell(smoke).splitlines()
+        if "/tmp/genai-oauth-curl.conf" in line
+    ]
+    for line in config_lines:
+        safe_generator = re.fullmatch(
+            r'\s*LOADTESTCLIENTID="\$LOADTESTCLIENTID"\s+'
+            r"python3 scripts/check_oidc_workflows\.py write-oauth-curl-config\s+"
+            r"--secret-json /tmp/genai-client-secret\.json\s+"
+            r"--output /tmp/genai-oauth-curl\.conf\s*",
+            line,
+        )
+        allowed = bool(safe_generator) or (
+            "--config /tmp/genai-oauth-curl.conf" in line
+            or re.search(r"\brm\s+-f\b", line) is not None
+        )
+        require(allowed, "direct shell writes to curl config are forbidden")
+        require(
+            re.search(r"(?:^|[;&|])\s*(?:printf|echo|cat|tee|python\s+-)\b", line)
+            is None,
+            "direct shell writes to curl config are forbidden",
+        )
     required_temporaries = (
         "/tmp/genai-oauth-curl.conf",
-        "/tmp/client-secret.txt",
+        "/tmp/genai-client-secret.json",
+        "/tmp/.genai-oauth-curl.conf.*.tmp",
         "/tmp/cloudops-full-token.json",
         "/tmp/cloudops-partial-token.json",
         "/tmp/genai-cdk-outputs.json",
@@ -447,7 +565,7 @@ def validate_deploy_workflow(workflow: str) -> list[str]:
     return errors
 
 
-def main() -> int:
+def validate_repository() -> int:
     errors: list[str] = []
     for path in (DEPLOY, DESTROY, BOOTSTRAP):
         if not path.is_file():
@@ -492,6 +610,34 @@ def main() -> int:
         print("\n".join(f"- {error}" for error in errors))
         return 1
     print("OIDC workflow guardrails passed")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = sys.argv[1:] if argv is None else argv
+    if not arguments:
+        return validate_repository()
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    oauth = commands.add_parser(
+        "write-oauth-curl-config",
+        help="Write a protected curl config for OAuth client credentials",
+    )
+    oauth.add_argument("--secret-json", type=Path, required=True)
+    oauth.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args(arguments)
+    try:
+        secret, basic = write_oauth_curl_config(
+            secret_json=args.secret_json,
+            output=args.output,
+            client_id=os.environ.get("LOADTESTCLIENTID"),
+        )
+    except OAuthConfigError:
+        print("OAuth curl config generation failed", file=sys.stderr)
+        return 2
+    print(f"::add-mask::{escape_github_command_value(secret)}")
+    print(f"::add-mask::{escape_github_command_value(basic)}")
     return 0
 
 

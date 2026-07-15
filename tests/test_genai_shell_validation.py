@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import base64
 import copy
 import json
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -16,8 +19,12 @@ from scripts.validate_genai_shell_aws import (
     write_evidence_atomic,
 )
 from scripts.check_oidc_workflows import (
+    OAuthConfigError,
+    escape_github_command_value,
+    main as oidc_main,
     validate_bootstrap_policy,
     validate_deploy_workflow,
+    write_oauth_curl_config,
 )
 
 
@@ -538,7 +545,6 @@ def test_cleanup_never_reads_log_events_or_prints_get_function_response():
             'PARTIAL_SCOPES="cloudops-incident-hub/incidents.read cloudops-incident-hub/incidents.write"',
             'PARTIAL_SCOPES="cloudops-incident-hub/incidents.read cloudops-incident-hub/incidents.write cloudops-incident-hub/incidents.summarize"',
         ),
-        ("::add-mask::$CLIENT_SECRET", "client secret available"),
         ("::add-mask::$FULL_TOKEN", "full token available"),
         ("::add-mask::$PARTIAL_TOKEN", "partial token available"),
         (
@@ -591,11 +597,9 @@ def test_workflow_guardrail_rejects_automatic_tracing_or_bedrock(addition: str):
         ("--config /tmp/genai-oauth-curl.conf", '-u "$LOADTESTCLIENTID:$CLIENT_SECRET"'),
         ("--config /tmp/genai-oauth-curl.conf", '--header "Authorization: Basic synthetic"'),
         ("          umask 077", "          umask 022"),
-        ("          chmod 600 /tmp/genai-oauth-curl.conf", "          chmod 644 /tmp/genai-oauth-curl.conf"),
-        ("/tmp/genai-oauth-curl.conf /tmp/genai-*", "/tmp/genai-*"),
         ("outputs_file=\"/tmp/genai-cdk-outputs.json\"", "outputs_file=\"../evidence/cdk-outputs.json\""),
         ("      - name: Remove GenAI validation temporary files", "      - name: Removed cleanup step"),
-        ("rm -f /tmp/genai-oauth-curl.conf /tmp/client-secret.txt", "rm -f /tmp/genai-oauth-curl.conf"),
+        ("rm -f /tmp/genai-oauth-curl.conf /tmp/genai-client-secret.json", "rm -f /tmp/genai-oauth-curl.conf"),
         ('test "$outcome" = "success"', 'test "$outcome" != "failure"'),
         ("            legacy)", "            legacy-disabled)"),
     ],
@@ -637,6 +641,246 @@ def test_oauth_secret_is_not_in_argv_and_has_dual_cleanup():
     assert "Authorization: Basic" not in content
     assert content.count("--config /tmp/genai-oauth-curl.conf") == 2
     assert "umask 077" in content
-    assert "chmod 600 /tmp/genai-oauth-curl.conf" in content
+    assert "write-oauth-curl-config" in content
     assert "trap cleanup_temporaries EXIT" in content
-    assert "rm -f /tmp/genai-oauth-curl.conf /tmp/client-secret.txt" in content
+    assert "rm -f /tmp/genai-oauth-curl.conf /tmp/genai-client-secret.json" in content
+    assert "CLIENT_SECRET" not in content
+
+
+@pytest.mark.parametrize(
+    ("client_id", "secret"),
+    [
+        ('client"id', 'secret"value'),
+        ("client'id", "secret'value"),
+        (r"client\id", r"secret\value"),
+        ("client\rid", "secret\rvalue"),
+        ("client\nid", "secret\nvalue"),
+        ("client\r\nid", "secret\r\nvalue"),
+        ("client%id", "secret%value"),
+        ("client id", "secret value"),
+        ("client=id", "secret=value"),
+        ("client:id", "secret:value"),
+        ("cliente-ñ", "secreto-雪"),
+        ("client", 'header = "X-Injected: yes"'),
+        ("client", 'url = "https://example.invalid"'),
+        ("client", 'proxy = "attacker.invalid"'),
+    ],
+)
+def test_oauth_config_encodes_adversarial_values_as_data(
+    tmp_path: Path, client_id: str, secret: str
+):
+    secret_json = tmp_path / "secret.json"
+    output = tmp_path / "curl.conf"
+    secret_json.write_text(json.dumps(secret), encoding="utf-8")
+
+    returned_secret, basic = write_oauth_curl_config(
+        secret_json=secret_json,
+        output=output,
+        client_id=client_id,
+    )
+
+    assert returned_secret == secret
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+    rendered = output.read_text(encoding="ascii")
+    assert rendered == f'header = "Authorization: Basic {basic}"\n'
+    assert len(rendered.splitlines()) == 1
+    assert client_id not in rendered
+    assert secret not in rendered
+    assert base64.b64decode(basic) == f"{client_id}:{secret}".encode("utf-8")
+    assert not any(
+        directive in rendered
+        for directive in ('X-Injected: yes', 'url = "', 'proxy = "')
+    )
+
+
+def test_oauth_cli_masks_secret_and_basic_with_workflow_escaping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    client_id = "client%\r\n雪"
+    secret = "secret%\r\n雪"
+    secret_json = tmp_path / "secret.json"
+    output = tmp_path / "curl.conf"
+    secret_json.write_text(json.dumps(secret), encoding="utf-8")
+    monkeypatch.setenv("LOADTESTCLIENTID", client_id)
+
+    assert oidc_main(
+        [
+            "write-oauth-curl-config",
+            "--secret-json",
+            str(secret_json),
+            "--output",
+            str(output),
+        ]
+    ) == 0
+
+    basic = base64.b64encode(f"{client_id}:{secret}".encode("utf-8")).decode("ascii")
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert captured.out.splitlines() == [
+        f"::add-mask::{escape_github_command_value(secret)}",
+        f"::add-mask::{basic}",
+    ]
+    assert "\r" not in captured.out and "\n" not in captured.out.replace("\n", "")
+
+
+@pytest.mark.parametrize(
+    ("raw_json", "client_id"),
+    [
+        ("not-json-sensitive-marker", "client"),
+        (json.dumps({"secret": "sensitive-marker"}), "client"),
+        (json.dumps(""), "client"),
+        (json.dumps("sensitive-marker"), None),
+        (json.dumps("sensitive-marker"), ""),
+    ],
+)
+def test_oauth_config_rejects_invalid_inputs_without_leaking(
+    tmp_path: Path, raw_json: str, client_id: str | None
+):
+    secret_json = tmp_path / "secret.json"
+    output = tmp_path / "curl.conf"
+    secret_json.write_text(raw_json, encoding="utf-8")
+    with pytest.raises(OAuthConfigError) as captured:
+        write_oauth_curl_config(
+            secret_json=secret_json,
+            output=output,
+            client_id=client_id,
+        )
+    assert "sensitive-marker" not in str(captured.value)
+    assert not output.exists()
+    assert not list(tmp_path.glob(".curl.conf.*.tmp"))
+
+
+def test_oauth_config_rejects_missing_output_directory_without_partial_file(
+    tmp_path: Path,
+):
+    secret_json = tmp_path / "secret.json"
+    secret_json.write_text(json.dumps("synthetic-secret"), encoding="utf-8")
+    output = tmp_path / "missing" / "curl.conf"
+    with pytest.raises(OAuthConfigError, match="could not be written"):
+        write_oauth_curl_config(
+            secret_json=secret_json,
+            output=output,
+            client_id="synthetic-client",
+        )
+    assert not output.exists()
+
+
+def test_oauth_config_rejects_non_utf8_surrogate_without_leaking(tmp_path: Path):
+    secret_json = tmp_path / "secret.json"
+    output = tmp_path / "curl.conf"
+    secret_json.write_text('"\\ud800sensitive-marker"', encoding="utf-8")
+    with pytest.raises(OAuthConfigError) as captured:
+        write_oauth_curl_config(
+            secret_json=secret_json,
+            output=output,
+            client_id="synthetic-client",
+        )
+    assert "sensitive-marker" not in str(captured.value)
+    assert not output.exists()
+
+
+def test_oauth_config_removes_atomic_temporary_after_replace_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    secret_json = tmp_path / "secret.json"
+    output = tmp_path / "curl.conf"
+    secret_json.write_text(json.dumps("synthetic-secret"), encoding="utf-8")
+
+    def fail_replace(source: str, destination: Path) -> None:
+        raise OSError("synthetic failure")
+
+    monkeypatch.setattr(os, "replace", fail_replace)
+    with pytest.raises(OAuthConfigError, match="could not be written"):
+        write_oauth_curl_config(
+            secret_json=secret_json,
+            output=output,
+            client_id="synthetic-client",
+        )
+    assert not output.exists()
+    assert not list(tmp_path.glob(".curl.conf.*.tmp"))
+
+
+def _inject_after_safe_config(workflow_text: str, line: str) -> str:
+    marker = "            --config /tmp/genai-oauth-curl.conf \\\n"
+    assert marker in workflow_text
+    return workflow_text.replace(marker, marker + f"            {line}\n", 1)
+
+
+@pytest.mark.parametrize(
+    ("line", "message"),
+    [
+        ('--user "$A:$B" \\', "curl --user"),
+        ('--user="$A:$B" \\', "curl --user"),
+        ('--user \\\n              "$A:$B" \\', "curl --user"),
+        ('-u "$A:$B" \\', "curl -u"),
+        ('-u"$A:$B" \\', "curl -u"),
+        ('-u${A}:${B} \\', "curl -u"),
+        ('-uVALUE \\', "curl -u"),
+        ('-H "Authorization: Basic abc" \\', "Basic Authorization"),
+        ('--header "Authorization: Basic abc" \\', "Basic Authorization"),
+        ('--header \\\n              "Authorization: Basic abc" \\', "Basic Authorization"),
+    ],
+)
+def test_guardrail_rejects_argv_credentials_while_safe_config_remains(
+    line: str, message: str
+):
+    mutated = _inject_after_safe_config(workflow(), line)
+    assert mutated.count("--config /tmp/genai-oauth-curl.conf") == 2
+    errors = validate_deploy_workflow(mutated)
+    assert any(message in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    ("injection", "message"),
+    [
+        ('          CLIENT_SECRET="synthetic"\n', "CLIENT_SECRET"),
+        ('          echo "$CLIENT_SECRET"\n', "CLIENT_SECRET"),
+        ('          printf \'url = "https://example.invalid"\\n\' >> /tmp/genai-oauth-curl.conf\n', "direct shell writes"),
+        ('          echo \'url = "https://example.invalid"\' >> /tmp/genai-oauth-curl.conf\n', "direct shell writes"),
+        ('          printf synthetic | tee -a /tmp/genai-oauth-curl.conf\n', "direct shell writes"),
+        ('          cat <<EOF >> /tmp/genai-oauth-curl.conf\n          url = synthetic\n          EOF\n', "direct shell writes"),
+        ('          python - <<\'PY\' > /tmp/genai-oauth-curl.conf\n          PY\n', "direct shell writes"),
+    ],
+)
+def test_guardrail_rejects_shell_secret_or_additional_config_writes(
+    injection: str, message: str
+):
+    mutated = workflow().replace("          FULL_SCOPES=", injection + "          FULL_SCOPES=", 1)
+    assert "write-oauth-curl-config" in mutated
+    assert mutated.count("--config /tmp/genai-oauth-curl.conf") == 2
+    errors = validate_deploy_workflow(mutated)
+    assert any(message in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "message"),
+    [
+        ("          umask 077", "          umask 022", "restrictive umask"),
+        ("rm -f /tmp/genai-oauth-curl.conf /tmp/genai-client-secret.json", "rm -f /tmp/genai-oauth-curl.conf", "secret JSON"),
+        ("--secret-json /tmp/genai-client-secret.json", "--secret-json secret.json", "temporary secret JSON"),
+        ("--output /tmp/genai-oauth-curl.conf", "--output genai-oauth-curl.conf", "temporary curl config"),
+    ],
+)
+def test_guardrail_rejects_weakened_safe_generator_controls(
+    old: str, new: str, message: str
+):
+    mutated = workflow().replace(old, new, 1)
+    assert mutated != workflow()
+    assert "write-oauth-curl-config" in mutated
+    errors = validate_deploy_workflow(mutated)
+    assert any(message in error for error in errors)
+
+
+def test_guardrail_allows_proxy_user_without_confusing_it_with_user():
+    mutated = _inject_after_safe_config(workflow(), '--proxy-user "synthetic" \\')
+    assert validate_deploy_workflow(mutated) == []
+
+
+def test_guardrail_rejects_config_write_appended_to_safe_generator_line():
+    mutated = workflow().replace(
+        "              --output /tmp/genai-oauth-curl.conf",
+        "              --output /tmp/genai-oauth-curl.conf; printf synthetic >> /tmp/genai-oauth-curl.conf",
+        1,
+    )
+    errors = validate_deploy_workflow(mutated)
+    assert any("direct shell writes" in error for error in errors)
