@@ -37,7 +37,7 @@ jobs:
           test -n "$AWS_DEPLOY_ROLE_ARN"
 
       - name: Configure temporary AWS credentials through OIDC
-        uses: aws-actions/configure-aws-credentials@v6.1.0
+        uses: aws-actions/configure-aws-credentials@6.2.2
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
