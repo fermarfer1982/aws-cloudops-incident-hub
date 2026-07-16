@@ -94,7 +94,7 @@ jobs:
             test -n "$SLACK_CHANNEL_ID"
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: steps.preflight.outcome == 'success'
 
       - uses: actions/setup-python@v5
