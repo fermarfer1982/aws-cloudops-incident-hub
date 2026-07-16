@@ -186,13 +186,23 @@ def _workflow_uses(workflow: str) -> tuple[list[WorkflowUse], list[str]]:
 
 
 def _explicit_uses_value(value: str, errors: list[str]) -> str | None:
-    value = value.strip()
+    value = re.sub(r"\s+#.*$", "", value).strip()
     if not value or value[0] in "[{|>*&" or value.startswith("<<"):
         _append_once(
             errors, "OIDC workflow uses values must be explicit scalar strings"
         )
         return None
-    return _yaml_scalar(value)
+    if (
+        value[0] in "\"'"
+        or value[-1] in "\"'"
+        or "\\" in value
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        _append_once(
+            errors, "OIDC workflow uses values must be unquoted plain scalars"
+        )
+        return None
+    return value
 
 
 def _uses_from_steps(

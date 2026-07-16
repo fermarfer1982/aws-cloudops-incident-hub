@@ -25,6 +25,7 @@ from scripts.check_oidc_workflows import (
     OIDC_ACTION_REPOSITORY,
     OIDC_PREFLIGHT,
     WorkflowUse,
+    _explicit_uses_value,
     _workflow_uses,
     OAuthConfigError,
     escape_github_command_value,
@@ -794,6 +795,90 @@ def test_oidc_action_rejects_alias_even_when_it_resolves_to_official_action():
     )
     errors = validate_oidc_credential_actions({"workflow": mutated})
     assert any("YAML anchors and aliases are forbidden" in error for error in errors)
+
+
+PLAIN_SCALAR_ERROR = "OIDC workflow uses values must be unquoted plain scalars"
+
+
+@pytest.mark.parametrize(
+    "uses",
+    [
+        r'"attacker/configure\u002daws\u002dcredentials@v6.2.2"',
+        r'"attacker/configure\x2daws\x2dcredentials@v6.2.2"',
+        r'"attacker/configure\U0000002Daws\U0000002Dcredentials@v6.2.2"',
+        r'"\u0061ttacker/configure-aws-credentials@v6.2.2"',
+        r'"attacker\u002fconfigure-aws-credentials@v6.2.2"',
+        '"aws-actions/configure-aws-credentials@v6.2.2"',
+        "'attacker/configure-aws-credentials@v6.2.2'",
+        "'aws-actions/configure-aws-credentials@v6.2.2'",
+        r'"attacker/configure-aws-credent\u0069als@v6.2.2"',
+        r'"attacker/configure-aws-credentials\u0040v6.2.2"',
+        r'"attacker\x2fconfigure\x2daws\x2dcredentials@v6.2.2"',
+        '"actions/checkout@v4"',
+        "'actions/setup-python@v5'",
+    ],
+)
+def test_oidc_action_rejects_quoted_or_escaped_uses_without_leaking_value(uses: str):
+    mutated = insert_workflow_step(workflow(), uses=uses, before_official=False)
+    errors = validate_oidc_credential_actions({"workflow": mutated})
+    assert f"workflow: {PLAIN_SCALAR_ERROR}" in errors
+    assert validate_deploy_workflow(mutated)
+    assert uses not in " ".join(errors)
+
+
+@pytest.mark.parametrize("path", [OIDC_PREFLIGHT, AWS_PERFORMANCE, DEPLOY_WORKFLOW, DESTROY])
+def test_oidc_action_rejects_quoted_uses_in_every_workflow(path: Path):
+    mutated = insert_workflow_step(
+        path.read_text(encoding="utf-8"),
+        uses='"actions/checkout@v4"',
+        before_official=False,
+    )
+    assert any(
+        PLAIN_SCALAR_ERROR in error
+        for error in validate_oidc_credential_actions({path: mutated})
+    )
+
+
+def test_oidc_action_rejects_quoted_job_level_uses():
+    mutated = workflow() + '\n  helper:\n    uses: "owner/repository/.github/workflows/helper.yml@v1"\n'
+    errors = validate_oidc_credential_actions({"workflow": mutated})
+    assert f"workflow: {PLAIN_SCALAR_ERROR}" in errors
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        '"actions/checkout@v4"',
+        "'actions/checkout@v4'",
+        r"actions/check\u006fut@v4",
+        '  "actions/checkout@v4"  # comment',
+        "actions/checkout@v4'",
+    ],
+)
+def test_explicit_uses_value_rejects_quotes_and_escapes(value: str):
+    errors: list[str] = []
+    assert _explicit_uses_value(value, errors) is None
+    assert errors == [PLAIN_SCALAR_ERROR]
+    assert value not in " ".join(errors)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("actions/checkout@v4", "actions/checkout@v4"),
+        ("actions/setup-python@v5", "actions/setup-python@v5"),
+        ("actions/setup-node@v4", "actions/setup-node@v4"),
+        ("actions/upload-artifact@v4", "actions/upload-artifact@v4"),
+        (
+            "aws-actions/configure-aws-credentials@v6.2.2 # current",
+            "aws-actions/configure-aws-credentials@v6.2.2",
+        ),
+    ],
+)
+def test_explicit_uses_value_preserves_plain_scalars(value: str, expected: str):
+    errors: list[str] = []
+    assert _explicit_uses_value(value, errors) == expected
+    assert errors == []
 
 
 def test_workflow_uses_extractor_reports_locations_and_stable_order():
