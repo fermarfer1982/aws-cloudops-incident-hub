@@ -22,39 +22,118 @@ OIDC_WORKFLOWS = (OIDC_PREFLIGHT, AWS_PERFORMANCE, DEPLOY, DESTROY)
 OIDC_ACTION_REPOSITORY = "aws-actions/configure-aws-credentials"
 OIDC_ACTION_MINIMUM_VERSION = (6, 2, 2)
 # The unprefixed form is also an official tag style and is emitted by Dependabot.
-OIDC_ACTION_VERSION_PATTERN = re.compile(r"(?P<prefix>v?)(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)")
+OIDC_ACTION_VERSION_PATTERN = re.compile(
+    r"(?P<prefix>v?)(?P<major>0|[1-9][0-9]*)\."
+    r"(?P<minor>0|[1-9][0-9]*)\.(?P<patch>0|[1-9][0-9]*)"
+)
 
 
 class OAuthConfigError(RuntimeError):
     """A stable error that never includes credential material."""
 
 
+def _step_uses(workflow: str) -> list[tuple[str, str]]:
+    """Return real step-level uses values and their step bodies."""
+    lines = workflow.splitlines()
+    result: list[tuple[str, str]] = []
+    position = 0
+    while position < len(lines):
+        steps_match = re.match(r"^(?P<indent> *)steps:\s*(?:#.*)?$", lines[position])
+        if steps_match is None:
+            position += 1
+            continue
+        steps_indent = len(steps_match.group("indent"))
+        position += 1
+        while position < len(lines):
+            line = lines[position]
+            if not line.strip() or line.lstrip().startswith("#"):
+                position += 1
+                continue
+            indent = len(line) - len(line.lstrip(" "))
+            if indent <= steps_indent:
+                break
+            step_match = re.match(r"^(?P<indent> *)-\s*(?P<value>.*)$", line)
+            if step_match is None:
+                position += 1
+                continue
+            step_indent = len(step_match.group("indent"))
+            if step_indent <= steps_indent:
+                position += 1
+                continue
+            start = position
+            position += 1
+            while position < len(lines):
+                candidate = lines[position]
+                if candidate.strip() and not candidate.lstrip().startswith("#"):
+                    candidate_indent = len(candidate) - len(candidate.lstrip(" "))
+                    if candidate_indent <= steps_indent or (
+                        candidate_indent == step_indent
+                        and re.match(r"^ *-\s*", candidate)
+                    ):
+                        break
+                position += 1
+            block_lines = lines[start:position]
+            inline_uses = re.fullmatch(r"uses:\s*(.+?)\s*", step_match.group("value"))
+            if inline_uses is not None:
+                result.append(
+                    (_yaml_scalar(inline_uses.group(1)), "\n".join(block_lines))
+                )
+            for block_line in block_lines[1:]:
+                uses_match = re.match(
+                    rf"^ {{{step_indent + 2}}}uses:\s*(.+?)\s*$", block_line
+                )
+                if uses_match is not None:
+                    result.append(
+                        (_yaml_scalar(uses_match.group(1)), "\n".join(block_lines))
+                    )
+    return result
+
+
+def _yaml_scalar(value: str) -> str:
+    value = re.sub(r"\s+#.*$", "", value.strip())
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return value[1:-1]
+    return value
+
+
+def _is_oidc_credential_action_candidate(uses: str) -> bool:
+    identifier = uses.split("@", 1)[0].rstrip("/")
+    last_component = identifier.rsplit("/", 1)[-1]
+    normalized = re.sub(r"[-_.]", "", last_component.lower())
+    return normalized == "configureawscredentials"
+
+
 def validate_oidc_credential_actions(workflows: dict[Path | str, str]) -> list[str]:
     """Validate the official credential action and its coherent semver policy."""
     errors: list[str] = []
     references: list[str] = []
-    step_pattern = re.compile(
-        r"(?ms)^\s*- name: Configure temporary AWS credentials through OIDC\s*$"
-        r"(?P<body>.*?)(?=^\s*- name:|\Z)"
-    )
-    uses_pattern = re.compile(r"(?m)^\s*uses:\s*([^@\s]+)@([^\s#]+)\s*$")
 
     for path, workflow in workflows.items():
         label = str(path)
-        step = step_pattern.search(workflow)
-        if step is None:
+        candidates = [
+            (uses, body)
+            for uses, body in _step_uses(workflow)
+            if _is_oidc_credential_action_candidate(uses)
+        ]
+        if not candidates:
             errors.append(f"{label}: OIDC credential action is required")
             continue
-        matches = uses_pattern.findall(step.group("body"))
-        if not matches:
-            errors.append(f"{label}: OIDC credential action is required")
+        alternative_exists = any(
+            "@" not in uses
+            or uses.rsplit("@", 1)[0] != OIDC_ACTION_REPOSITORY
+            for uses, _ in candidates
+        )
+        if alternative_exists:
+            errors.append(
+                f"{label}: OIDC credential action must use the official repository"
+            )
             continue
-        if len(matches) != 1:
+        if len(candidates) != 1:
             errors.append(
                 f"{label}: OIDC credential action must appear exactly once per workflow"
             )
             continue
-        step_body = step.group("body")
+        uses, step_body = candidates[0]
         for token, message in (
             ("role-to-assume:", "OIDC credential action requires role-to-assume"),
             ("aws-region:", "OIDC credential action requires aws-region"),
@@ -67,26 +146,11 @@ def validate_oidc_credential_actions(workflows: dict[Path | str, str]) -> list[s
             for token in ("aws-access-key-id:", "aws-secret-access-key:", "aws-session-token:")
         ):
             errors.append(f"{label}: static AWS credential configuration is forbidden")
-        repository, reference = matches[0]
-        if repository != OIDC_ACTION_REPOSITORY:
-            errors.append(
-                f"{label}: OIDC credential action must use the official repository"
-            )
-            continue
-        official_references = [
-            match
-            for match in uses_pattern.findall(workflow)
-            if match[0] == OIDC_ACTION_REPOSITORY
-        ]
-        if len(official_references) != 1:
-            errors.append(
-                f"{label}: OIDC credential action must appear exactly once per workflow"
-            )
-            continue
+        _, reference = uses.rsplit("@", 1)
         version_match = OIDC_ACTION_VERSION_PATTERN.fullmatch(reference)
         if version_match is None:
             errors.append(
-                f"{label}: OIDC credential action must use a full semantic version"
+                f"{label}: OIDC credential action must use a canonical full semantic version"
             )
             continue
         version = tuple(

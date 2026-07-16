@@ -441,6 +441,18 @@ def oidc_workflows() -> dict[Path, str]:
     }
 
 
+def insert_workflow_step(
+    content: str, *, uses: str, before_official: bool, name: str = "Helper"
+) -> str:
+    action_position = content.index(f"{OIDC_ACTION_REPOSITORY}@")
+    starts = [match.start() for match in re.finditer(r"(?m)^      - (?:name|uses):", content)]
+    current = max(position for position in starts if position < action_position)
+    later = [position for position in starts if position > action_position]
+    insertion = current if before_official else min(later)
+    step = f"      - name: {name}\n        uses: {uses}\n\n"
+    return content[:insertion] + step + content[insertion:]
+
+
 def bootstrap() -> str:
     return BOOTSTRAP_TEMPLATE.read_text(encoding="utf-8")
 
@@ -507,7 +519,7 @@ def test_oidc_action_accepts_supported_prefixed_versions(reference: str):
     assert validate_oidc_credential_actions(contents) == []
 
 
-@pytest.mark.parametrize("reference", ["6.2.2", "6.2.3", "6.3.0"])
+@pytest.mark.parametrize("reference", ["6.2.2", "6.2.3", "6.3.0", "6.10.1"])
 def test_oidc_action_accepts_official_unprefixed_versions(reference: str):
     contents = {
         path: replace_oidc_action(content, reference)
@@ -523,13 +535,13 @@ def test_oidc_action_accepts_official_unprefixed_versions(reference: str):
         ("v6.2.1", "version must be at least 6.2.2"),
         ("v5.9.9", "major must be 6"),
         ("v7.0.0", "major must be 6"),
-        ("v6", "must use a full semantic version"),
-        ("v6.2", "must use a full semantic version"),
-        ("v6.2.2-beta", "must use a full semantic version"),
-        ("main", "must use a full semantic version"),
-        ("latest", "must use a full semantic version"),
-        ("a" * 40, "must use a full semantic version"),
-        ("release-v6.2.2", "must use a full semantic version"),
+        ("v6", "must use a canonical full semantic version"),
+        ("v6.2", "must use a canonical full semantic version"),
+        ("v6.2.2-beta", "must use a canonical full semantic version"),
+        ("main", "must use a canonical full semantic version"),
+        ("latest", "must use a canonical full semantic version"),
+        ("a" * 40, "must use a canonical full semantic version"),
+        ("release-v6.2.2", "must use a canonical full semantic version"),
     ],
 )
 def test_oidc_action_rejects_unsupported_references(reference: str, message: str):
@@ -540,12 +552,113 @@ def test_oidc_action_rejects_unsupported_references(reference: str, message: str
 
 
 @pytest.mark.parametrize(
-    "repository", ["example/configure-aws-credentials", "aws-actions/credentials"]
+    "repository",
+    ["example/configure-aws-credentials", "aws-actions/configure_aws_credentials"],
 )
 def test_oidc_action_rejects_alternative_repository(repository: str):
     mutated = workflow().replace(OIDC_ACTION_REPOSITORY, repository, 1)
     errors = validate_oidc_credential_actions({"workflow": mutated})
     assert any("must use the official repository" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "uses",
+    [
+        "attacker/configure-aws-credentials@v6.2.2",
+        "./configure-aws-credentials",
+        "./actions/configure-aws-credentials",
+        "attacker/configure_aws_credentials@v6.2.2",
+        "attacker/configure.aws.credentials@v6.2.2",
+        "AWS-ACTIONS/configure-aws-credentials@v6.2.2",
+        "attacker/configure-aws-credentials@v6.2.2 # inline comment",
+    ],
+)
+@pytest.mark.parametrize("before_official", [False, True])
+def test_oidc_action_rejects_alternative_candidate_in_any_step(
+    uses: str, before_official: bool
+):
+    mutated = insert_workflow_step(
+        workflow(),
+        uses=uses,
+        before_official=before_official,
+        name="Secondary credential action" if before_official else "Helper",
+    )
+    errors = validate_oidc_credential_actions({"workflow": mutated})
+    assert errors == [
+        "workflow: OIDC credential action must use the official repository"
+    ]
+
+
+@pytest.mark.parametrize("path", [OIDC_PREFLIGHT, AWS_PERFORMANCE, DEPLOY_WORKFLOW, DESTROY])
+def test_oidc_action_rejects_alternative_candidate_in_every_workflow(path: Path):
+    content = path.read_text(encoding="utf-8")
+    mutated = insert_workflow_step(
+        content,
+        uses="attacker/configure-aws-credentials@v6.2.2",
+        before_official=False,
+    )
+    errors = validate_oidc_credential_actions({path: mutated})
+    assert any("must use the official repository" in error for error in errors)
+
+
+def test_oidc_action_ignores_comments_run_strings_and_unrelated_actions():
+    current = workflow()
+    harmless = current.replace(
+        "permissions:\n",
+        "# uses: attacker/configure-aws-credentials@v6.2.2\npermissions:\n",
+        1,
+    )
+    harmless = harmless.replace(
+        "      - name: Verify AWS identity\n",
+        "      - name: Explain credential action\n"
+        "        run: |\n"
+        "          uses: attacker/configure-aws-credentials@v6.2.2\n\n"
+        "      - name: Unrelated action\n"
+        "        uses: actions/setup-python@v5\n\n"
+        "      - name: Verify AWS identity\n",
+        1,
+    )
+    assert validate_oidc_credential_actions({"workflow": harmless}) == []
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        "v06.2.2",
+        "v6.02.2",
+        "v6.2.02",
+        "06.2.2",
+        "6.02.2",
+        "6.2.02",
+        "v0006.0002.0002",
+        "0006.0002.0002",
+        "v6.002.0002",
+        "v6.2.2.0",
+    ],
+)
+def test_oidc_action_rejects_noncanonical_semver_in_all_workflows(reference: str):
+    contents = {
+        path: replace_oidc_action(content, reference)
+        for path, content in oidc_workflows().items()
+    }
+    errors = validate_oidc_credential_actions(contents)
+    assert len(errors) == 4
+    assert all("must use a canonical full semantic version" in error for error in errors)
+
+
+def test_oidc_action_fixture_replacement_requires_exactly_one_action():
+    current = workflow()
+    missing = OIDC_ACTION_PATTERN.sub("", current, count=1)
+    duplicate = current.replace(
+        OIDC_ACTION_PATTERN.search(current).group(0),
+        f"{OIDC_ACTION_PATTERN.search(current).group(0)}\n"
+        f"{OIDC_ACTION_PATTERN.search(current).group(0)}",
+        1,
+    )
+    with pytest.raises(AssertionError, match="exactly one credential action"):
+        replace_oidc_action(missing, "v6.2.3")
+    with pytest.raises(AssertionError, match="exactly one credential action"):
+        replace_oidc_action(duplicate, "v6.2.3")
 
 
 def test_oidc_action_rejects_missing_or_duplicate_action():
