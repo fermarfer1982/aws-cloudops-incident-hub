@@ -58,6 +58,7 @@ def test_ephemeral_performance_profile_creates_scoped_machine_client():
     assert machine_client["AllowedOAuthFlowsUserPoolClient"] is True
     assert set(machine_client["AllowedOAuthScopes"]) == {
         "cloudops-incident-hub/incidents.read",
+        "cloudops-incident-hub/incidents.summarize",
         "cloudops-incident-hub/incidents.write",
     }
     assert machine_client["AccessTokenValidity"] == 15
