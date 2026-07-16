@@ -24,6 +24,8 @@ from scripts.check_oidc_workflows import (
     DESTROY,
     OIDC_ACTION_REPOSITORY,
     OIDC_PREFLIGHT,
+    WorkflowUse,
+    _workflow_uses,
     OAuthConfigError,
     escape_github_command_value,
     main as oidc_main,
@@ -444,13 +446,28 @@ def oidc_workflows() -> dict[Path, str]:
 def insert_workflow_step(
     content: str, *, uses: str, before_official: bool, name: str = "Helper"
 ) -> str:
-    action_position = content.index(f"{OIDC_ACTION_REPOSITORY}@")
+    action_match = OIDC_ACTION_PATTERN.search(content)
+    assert action_match is not None
+    action_position = action_match.start()
     starts = [match.start() for match in re.finditer(r"(?m)^      - (?:name|uses):", content)]
     current = max(position for position in starts if position < action_position)
     later = [position for position in starts if position > action_position]
     insertion = current if before_official else min(later)
     step = f"      - name: {name}\n        uses: {uses}\n\n"
     return content[:insertion] + step + content[insertion:]
+
+
+def insert_raw_workflow_step(
+    content: str, raw_step: str, *, before_official: bool = False
+) -> str:
+    action_match = OIDC_ACTION_PATTERN.search(content)
+    assert action_match is not None
+    action_position = action_match.start()
+    starts = [match.start() for match in re.finditer(r"(?m)^      - (?:name|uses):", content)]
+    current = max(position for position in starts if position < action_position)
+    later = [position for position in starts if position > action_position]
+    insertion = current if before_official else min(later)
+    return content[:insertion] + raw_step + "\n" + content[insertion:]
 
 
 def bootstrap() -> str:
@@ -599,6 +616,231 @@ def test_oidc_action_rejects_alternative_candidate_in_every_workflow(path: Path)
     )
     errors = validate_oidc_credential_actions({path: mutated})
     assert any("must use the official repository" in error for error in errors)
+
+
+@pytest.mark.parametrize("path", [OIDC_PREFLIGHT, AWS_PERFORMANCE, DEPLOY_WORKFLOW, DESTROY])
+@pytest.mark.parametrize(
+    "uses",
+    [
+        "attacker/configure-aws-credentials/subaction@v6.2.2",
+        "aws-actions/configure-aws-credentials/subaction@v6.2.2",
+        "attacker/other/configure-aws-credentials@v6.2.2",
+        "attacker/other/configure_aws_credentials/helper@v6.2.2",
+        "attacker/configure.aws.credentials/subaction@v6.2.2",
+        "attacker/configure--aws--credentials/helper@v6.2.2",
+        "./configure-aws-credentials/subaction",
+        "./actions/configure-aws-credentials/subaction",
+        "../configure-aws-credentials/helper",
+    ],
+)
+def test_oidc_action_rejects_candidate_in_any_remote_or_local_component(
+    path: Path, uses: str
+):
+    content = path.read_text(encoding="utf-8")
+    mutated = insert_workflow_step(
+        content,
+        uses=uses,
+        before_official=False,
+    )
+    errors = validate_oidc_credential_actions({path: mutated})
+    assert any("must use the official repository" in error for error in errors)
+
+
+@pytest.mark.parametrize("path", [OIDC_PREFLIGHT, AWS_PERFORMANCE, DEPLOY_WORKFLOW, DESTROY])
+@pytest.mark.parametrize(
+    "uses",
+    [
+        "attacker/configure-aws-credentials/.github/workflows/helper.yml@v1",
+        "aws-actions/configure-aws-credentials/.github/workflows/helper.yml@v6.2.2",
+    ],
+)
+def test_oidc_action_rejects_candidate_reusable_workflow(path: Path, uses: str):
+    content = path.read_text(encoding="utf-8")
+    mutated = content + f"\n  credential_helper:\n    uses: {uses}\n"
+    errors = validate_oidc_credential_actions({path: mutated})
+    assert any("must be declared as a step action" in error for error in errors)
+
+
+@pytest.mark.parametrize("path", [OIDC_PREFLIGHT, AWS_PERFORMANCE, DEPLOY_WORKFLOW, DESTROY])
+def test_oidc_action_rejects_scalar_anchor_and_alias_in_every_workflow(path: Path):
+    content = path.read_text(encoding="utf-8")
+    anchored = (
+        "env:\n"
+        "  CREDENTIAL_ACTION: &credential_action "
+        "attacker/configure-aws-credentials@v6.2.2\n\n"
+        + content
+    )
+    mutated = insert_workflow_step(
+        anchored,
+        uses="*credential_action",
+        before_official=False,
+    )
+    errors = validate_oidc_credential_actions({path: mutated})
+    assert any("YAML anchors and aliases are forbidden" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    ("prefix", "raw_step", "message"),
+    [
+        (
+            "x-credential-step: &credential_step\n"
+            "  uses: attacker/configure-aws-credentials@v6.2.2\n\n",
+            "      - <<: *credential_step\n        name: Helper\n",
+            "YAML anchors and aliases are forbidden",
+        ),
+        (
+            "x-credential-step: &credential_step\n"
+            "  name: Helper\n"
+            "  uses: attacker/configure-aws-credentials@v6.2.2\n\n",
+            "      - *credential_step\n",
+            "YAML anchors and aliases are forbidden",
+        ),
+        (
+            "",
+            "      - &credential_step\n"
+            "        name: Helper\n"
+            "        uses: attacker/configure-aws-credentials@v6.2.2\n",
+            "YAML anchors and aliases are forbidden",
+        ),
+        (
+            "x-credential-step: &credential_step\n"
+            "  uses: attacker/configure-aws-credentials@v6.2.2\n\n",
+            "      - <<: *credential_step\n        name: Helper\n",
+            "YAML merge keys are forbidden",
+        ),
+    ],
+)
+def test_oidc_action_rejects_anchored_mappings_and_merge_keys(
+    prefix: str, raw_step: str, message: str
+):
+    mutated = prefix + insert_raw_workflow_step(workflow(), raw_step)
+    errors = validate_oidc_credential_actions({"workflow": mutated})
+    assert any(message in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    ("raw_step", "message"),
+    [
+        (
+            "      - { name: Helper, uses: attacker/configure-aws-credentials@v6.2.2 }\n",
+            "steps must use canonical block mappings",
+        ),
+        (
+            "      - name: Helper\n"
+            '        "uses": attacker/configure-aws-credentials@v6.2.2\n',
+            "steps must use canonical block mappings",
+        ),
+        (
+            "      - name: Helper\n"
+            "        ? uses\n"
+            "        : attacker/configure-aws-credentials@v6.2.2\n",
+            "steps must use canonical block mappings",
+        ),
+        (
+            "      - name: Helper\n"
+            "        uses: >\n"
+            "          attacker/configure-aws-credentials@v6.2.2\n",
+            "uses values must be explicit scalar strings",
+        ),
+        (
+            "      - name: Helper\n"
+            "        uses: |\n"
+            "          attacker/configure-aws-credentials@v6.2.2\n",
+            "uses values must be explicit scalar strings",
+        ),
+        (
+            "      - name: Helper\n"
+            "        uses: [attacker/configure-aws-credentials@v6.2.2]\n",
+            "uses values must be explicit scalar strings",
+        ),
+        (
+            "      - name: Helper\n"
+            "        uses: aws-actions/configure-aws-credentials@v6.2.2\n"
+            "        uses: attacker/unrelated-action@v1\n",
+            "must not contain duplicate uses keys",
+        ),
+        (
+            "      - name: Helper\n"
+            "        uses: attacker/unrelated-action@v1\n"
+            "        uses: aws-actions/configure-aws-credentials@v6.2.2\n",
+            "must not contain duplicate uses keys",
+        ),
+    ],
+)
+def test_oidc_action_rejects_ambiguous_step_yaml(raw_step: str, message: str):
+    mutated = insert_raw_workflow_step(workflow(), raw_step)
+    errors = validate_oidc_credential_actions({"workflow": mutated})
+    assert any(message in error for error in errors)
+
+
+def test_oidc_action_rejects_job_flow_mapping_with_candidate_uses():
+    mutated = workflow() + (
+        "\n  helper: { uses: "
+        "attacker/configure-aws-credentials/.github/workflows/helper.yml@v1 }\n"
+    )
+    errors = validate_oidc_credential_actions({"workflow": mutated})
+    assert any("steps must use canonical block mappings" in error for error in errors)
+
+
+def test_oidc_action_rejects_alias_even_when_it_resolves_to_official_action():
+    anchored = (
+        "env:\n"
+        "  CREDENTIAL_ACTION: &credential_action "
+        "aws-actions/configure-aws-credentials@v6.2.2\n\n"
+        + workflow()
+    )
+    mutated = insert_workflow_step(
+        anchored, uses="*credential_action", before_official=False
+    )
+    errors = validate_oidc_credential_actions({"workflow": mutated})
+    assert any("YAML anchors and aliases are forbidden" in error for error in errors)
+
+
+def test_workflow_uses_extractor_reports_locations_and_stable_order():
+    extracted, errors = _workflow_uses(workflow())
+    assert errors == []
+    assert extracted
+    assert all(isinstance(item, WorkflowUse) for item in extracted)
+    assert all(item.location == "step" for item in extracted)
+    assert [item.line for item in extracted] == sorted(item.line for item in extracted)
+    assert sum(item.value == f"{OIDC_ACTION_REPOSITORY}@v6.2.2" for item in extracted) == 1
+
+
+def test_workflow_uses_extractor_excludes_comments_and_block_scalars():
+    marker = "ARBITRARY-SENSITIVE-MARKER"
+    harmless = (
+        'env:\n  DESCRIPTION: "&credential_action *credential_action <<:"\n\n'
+        + workflow()
+    ).replace(
+        "permissions:\n",
+        "# &credential_action *credential_action <<: " + marker + "\npermissions:\n",
+        1,
+    )
+    harmless = harmless.replace(
+        "      - name: Verify AWS identity\n",
+        "      - name: Harmless YAML-looking shell\n"
+        "        run: |\n"
+        "          echo '&credential_action *credential_action <<:'\n"
+        "          uses: attacker/configure-aws-credentials@v6.2.2\n\n"
+        "      - name: Verify AWS identity\n",
+        1,
+    )
+    extracted, errors = _workflow_uses(harmless)
+    assert errors == []
+    assert not any("attacker/configure-aws-credentials" in item.value for item in extracted)
+    assert marker not in " ".join(errors)
+
+
+def test_workflow_uses_extractor_reports_duplicate_without_arbitrary_content():
+    marker = "ARBITRARY-SENSITIVE-MARKER"
+    raw_step = (
+        "      - name: " + marker + "\n"
+        "        uses: actions/checkout@v4\n"
+        "        uses: actions/setup-python@v5\n"
+    )
+    _, errors = _workflow_uses(insert_raw_workflow_step(workflow(), raw_step))
+    assert errors == ["OIDC workflow steps must not contain duplicate uses keys"]
+    assert marker not in " ".join(errors)
 
 
 def test_oidc_action_ignores_comments_run_strings_and_unrelated_actions():

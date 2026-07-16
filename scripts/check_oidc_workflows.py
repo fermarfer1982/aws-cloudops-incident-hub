@@ -9,6 +9,7 @@ import os
 import re
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -32,60 +33,244 @@ class OAuthConfigError(RuntimeError):
     """A stable error that never includes credential material."""
 
 
-def _step_uses(workflow: str) -> list[tuple[str, str]]:
-    """Return real step-level uses values and their step bodies."""
-    lines = workflow.splitlines()
-    result: list[tuple[str, str]] = []
+@dataclass(frozen=True)
+class WorkflowUse:
+    value: str
+    location: str
+    line: int
+    body: str
+
+
+def _without_yaml_comment(line: str) -> tuple[str, str]:
+    """Return comment-free text and a view with quoted content masked."""
+    clean: list[str] = []
+    visible: list[str] = []
+    quote: str | None = None
+    position = 0
+    while position < len(line):
+        character = line[position]
+        if quote is None and character == "#" and (
+            position == 0 or line[position - 1].isspace()
+        ):
+            break
+        if quote is None and character in "\"'":
+            quote = character
+            clean.append(character)
+            visible.append(character)
+        elif quote == "\"" and character == "\\" and position + 1 < len(line):
+            clean.extend((character, line[position + 1]))
+            visible.extend((" ", " "))
+            position += 1
+        elif quote == "'" and character == "'" and position + 1 < len(line) and line[position + 1] == "'":
+            clean.extend((character, line[position + 1]))
+            visible.extend((" ", " "))
+            position += 1
+        elif quote is not None and character == quote:
+            quote = None
+            clean.append(character)
+            visible.append(character)
+        else:
+            clean.append(character)
+            visible.append(character if quote is None else " ")
+        position += 1
+    return "".join(clean).rstrip(), "".join(visible).rstrip()
+
+
+def _append_once(errors: list[str], message: str) -> None:
+    if message not in errors:
+        errors.append(message)
+
+
+def _workflow_uses(workflow: str) -> tuple[list[WorkflowUse], list[str]]:
+    """Extract canonical job/step uses and reject ambiguous YAML constructs."""
+    raw_lines = workflow.splitlines()
+    lines: list[str] = []
+    visible_lines: list[str] = []
+    errors: list[str] = []
+    block_indent: int | None = None
+
+    for raw_line in raw_lines:
+        indent = len(raw_line) - len(raw_line.lstrip(" "))
+        if block_indent is not None:
+            if not raw_line.strip() or indent > block_indent:
+                lines.append("")
+                visible_lines.append("")
+                continue
+            block_indent = None
+        clean, visible = _without_yaml_comment(raw_line)
+        lines.append(clean)
+        visible_lines.append(visible)
+        if not clean.strip():
+            continue
+        is_run = re.match(r"^\s*(?:-\s*)?run\s*:", visible) is not None
+        if not is_run:
+            if re.search(r"(?:^|[\s\[\]{},:])&[A-Za-z_][A-Za-z0-9_-]*", visible):
+                _append_once(
+                    errors, "YAML anchors and aliases are forbidden in OIDC workflows"
+                )
+            if re.search(r"(?:^|[\s\[\]{},:])\*[A-Za-z_][A-Za-z0-9_-]*", visible):
+                _append_once(
+                    errors, "YAML anchors and aliases are forbidden in OIDC workflows"
+                )
+            if re.search(r"(?:^|[\s{,])<<\s*:", visible):
+                _append_once(errors, "YAML merge keys are forbidden in OIDC workflows")
+        if re.search(r":\s*[|>][+-]?\s*$", visible):
+            block_indent = indent
+
+    uses: list[WorkflowUse] = []
     position = 0
     while position < len(lines):
-        steps_match = re.match(r"^(?P<indent> *)steps:\s*(?:#.*)?$", lines[position])
-        if steps_match is None:
+        jobs_match = re.match(r"^(?P<indent> *)jobs:\s*$", visible_lines[position])
+        if jobs_match is None:
             position += 1
             continue
-        steps_indent = len(steps_match.group("indent"))
+        jobs_indent = len(jobs_match.group("indent"))
         position += 1
         while position < len(lines):
-            line = lines[position]
-            if not line.strip() or line.lstrip().startswith("#"):
+            visible = visible_lines[position]
+            if not visible.strip():
                 position += 1
                 continue
-            indent = len(line) - len(line.lstrip(" "))
-            if indent <= steps_indent:
+            indent = len(visible) - len(visible.lstrip(" "))
+            if indent <= jobs_indent:
                 break
-            step_match = re.match(r"^(?P<indent> *)-\s*(?P<value>.*)$", line)
-            if step_match is None:
+            job_match = re.match(r"^(?P<indent> *)(?P<key>[A-Za-z0-9_-]+):(?P<rest>.*)$", visible)
+            if job_match is None or len(job_match.group("indent")) <= jobs_indent:
                 position += 1
                 continue
-            step_indent = len(step_match.group("indent"))
-            if step_indent <= steps_indent:
-                position += 1
-                continue
-            start = position
-            position += 1
-            while position < len(lines):
-                candidate = lines[position]
-                if candidate.strip() and not candidate.lstrip().startswith("#"):
+            job_indent = len(job_match.group("indent"))
+            job_end = position + 1
+            while job_end < len(lines):
+                candidate = visible_lines[job_end]
+                if candidate.strip():
                     candidate_indent = len(candidate) - len(candidate.lstrip(" "))
-                    if candidate_indent <= steps_indent or (
-                        candidate_indent == step_indent
-                        and re.match(r"^ *-\s*", candidate)
-                    ):
+                    if candidate_indent <= job_indent:
                         break
-                position += 1
-            block_lines = lines[start:position]
-            inline_uses = re.fullmatch(r"uses:\s*(.+?)\s*", step_match.group("value"))
-            if inline_uses is not None:
-                result.append(
-                    (_yaml_scalar(inline_uses.group(1)), "\n".join(block_lines))
-                )
-            for block_line in block_lines[1:]:
-                uses_match = re.match(
-                    rf"^ {{{step_indent + 2}}}uses:\s*(.+?)\s*$", block_line
-                )
-                if uses_match is not None:
-                    result.append(
-                        (_yaml_scalar(uses_match.group(1)), "\n".join(block_lines))
+                job_end += 1
+            if "{" in job_match.group("rest") and re.search(
+                r"(?:^|[{,]\s*)uses\s*:", job_match.group("rest")
+            ):
+                _append_once(errors, "OIDC workflow steps must use canonical block mappings")
+            job_body = lines[position:job_end]
+            for offset, job_line in enumerate(job_body[1:], start=position + 1):
+                job_visible = visible_lines[offset]
+                job_line_indent = len(job_visible) - len(job_visible.lstrip(" "))
+                if job_line_indent != job_indent + 2:
+                    continue
+                job_uses = re.match(r"^\s*uses\s*:\s*(.*)$", job_line)
+                if job_uses is not None:
+                    value = _explicit_uses_value(job_uses.group(1), errors)
+                    if value is not None:
+                        uses.append(
+                            WorkflowUse(value, "job", offset + 1, "\n".join(job_body))
+                        )
+            steps_positions = [
+                offset
+                for offset in range(position + 1, job_end)
+                if len(visible_lines[offset]) - len(visible_lines[offset].lstrip(" "))
+                == job_indent + 2
+                and re.match(r"^\s*steps\s*:\s*$", visible_lines[offset])
+            ]
+            for steps_position in steps_positions:
+                uses.extend(
+                    _uses_from_steps(
+                        lines,
+                        visible_lines,
+                        steps_position,
+                        job_end,
+                        errors,
                     )
+                )
+            position = job_end
+    return uses, errors
+
+
+def _explicit_uses_value(value: str, errors: list[str]) -> str | None:
+    value = value.strip()
+    if not value or value[0] in "[{|>*&" or value.startswith("<<"):
+        _append_once(
+            errors, "OIDC workflow uses values must be explicit scalar strings"
+        )
+        return None
+    return _yaml_scalar(value)
+
+
+def _uses_from_steps(
+    lines: list[str],
+    visible_lines: list[str],
+    steps_position: int,
+    job_end: int,
+    errors: list[str],
+) -> list[WorkflowUse]:
+    result: list[WorkflowUse] = []
+    steps_indent = len(visible_lines[steps_position]) - len(
+        visible_lines[steps_position].lstrip(" ")
+    )
+    position = steps_position + 1
+    while position < job_end:
+        visible = visible_lines[position]
+        if not visible.strip():
+            position += 1
+            continue
+        indent = len(visible) - len(visible.lstrip(" "))
+        if indent <= steps_indent:
+            break
+        step_match = re.match(r"^(?P<indent> *)-\s*(?P<rest>.*)$", visible)
+        if step_match is None:
+            position += 1
+            continue
+        step_indent = len(step_match.group("indent"))
+        step_end = position + 1
+        while step_end < job_end:
+            candidate = visible_lines[step_end]
+            if candidate.strip():
+                candidate_indent = len(candidate) - len(candidate.lstrip(" "))
+                if candidate_indent <= steps_indent or (
+                    candidate_indent == step_indent
+                    and re.match(r"^ *-\s*", candidate)
+                ):
+                    break
+            step_end += 1
+        rest = step_match.group("rest")
+        if rest.startswith("{"):
+            _append_once(errors, "OIDC workflow steps must use canonical block mappings")
+            position = step_end
+            continue
+        if rest.startswith("&") or rest.startswith("*") or rest.startswith("<<:"):
+            _append_once(
+                errors, "YAML anchors and aliases are forbidden in OIDC workflows"
+            )
+        step_body = lines[position:step_end]
+        found: list[tuple[str, int]] = []
+        inline = re.match(r"^uses\s*:\s*(.*)$", lines[position].lstrip()[1:].lstrip())
+        if inline is not None:
+            found.append((inline.group(1), position + 1))
+        for offset in range(position + 1, step_end):
+            line = lines[offset]
+            line_visible = visible_lines[offset]
+            line_indent = len(line_visible) - len(line_visible.lstrip(" "))
+            if line_indent != step_indent + 2:
+                continue
+            if re.match(r"^\s*[\"']uses[\"']\s*:", line):
+                _append_once(errors, "OIDC workflow steps must use canonical block mappings")
+                continue
+            if re.match(r"^\s*\?\s*uses\s*$", line_visible):
+                _append_once(errors, "OIDC workflow steps must use canonical block mappings")
+                continue
+            uses_match = re.match(r"^\s*uses\s*:\s*(.*)$", line)
+            if uses_match is not None:
+                found.append((uses_match.group(1), offset + 1))
+        if len(found) > 1:
+            _append_once(
+                errors, "OIDC workflow steps must not contain duplicate uses keys"
+            )
+        for raw_value, line_number in found:
+            value = _explicit_uses_value(raw_value, errors)
+            if value is not None:
+                result.append(
+                    WorkflowUse(value, "step", line_number, "\n".join(step_body))
+                )
+        position = step_end
     return result
 
 
@@ -97,10 +282,16 @@ def _yaml_scalar(value: str) -> str:
 
 
 def _is_oidc_credential_action_candidate(uses: str) -> bool:
-    identifier = uses.split("@", 1)[0].rstrip("/")
-    last_component = identifier.rsplit("/", 1)[-1]
-    normalized = re.sub(r"[-_.]", "", last_component.lower())
-    return normalized == "configureawscredentials"
+    identifier = uses.rsplit("@", 1)[0]
+    components = [
+        component
+        for component in identifier.split("/")
+        if component not in ("", ".", "..")
+    ]
+    return any(
+        re.sub(r"[-_.]", "", component.lower()) == "configureawscredentials"
+        for component in components
+    )
 
 
 def validate_oidc_credential_actions(workflows: dict[Path | str, str]) -> list[str]:
@@ -110,18 +301,24 @@ def validate_oidc_credential_actions(workflows: dict[Path | str, str]) -> list[s
 
     for path, workflow in workflows.items():
         label = str(path)
+        extracted_uses, syntax_errors = _workflow_uses(workflow)
+        errors.extend(f"{label}: {error}" for error in syntax_errors)
         candidates = [
-            (uses, body)
-            for uses, body in _step_uses(workflow)
-            if _is_oidc_credential_action_candidate(uses)
+            item for item in extracted_uses if _is_oidc_credential_action_candidate(item.value)
         ]
+        job_candidates = [item for item in candidates if item.location == "job"]
+        if job_candidates:
+            errors.append(
+                f"{label}: OIDC credential action must be declared as a step action"
+            )
+            candidates = [item for item in candidates if item.location == "step"]
         if not candidates:
             errors.append(f"{label}: OIDC credential action is required")
             continue
         alternative_exists = any(
-            "@" not in uses
-            or uses.rsplit("@", 1)[0] != OIDC_ACTION_REPOSITORY
-            for uses, _ in candidates
+            "@" not in item.value
+            or item.value.rsplit("@", 1)[0] != OIDC_ACTION_REPOSITORY
+            for item in candidates
         )
         if alternative_exists:
             errors.append(
@@ -133,7 +330,8 @@ def validate_oidc_credential_actions(workflows: dict[Path | str, str]) -> list[s
                 f"{label}: OIDC credential action must appear exactly once per workflow"
             )
             continue
-        uses, step_body = candidates[0]
+        item = candidates[0]
+        uses, step_body = item.value, item.body
         for token, message in (
             ("role-to-assume:", "OIDC credential action requires role-to-assume"),
             ("aws-region:", "OIDC credential action requires aws-region"),
