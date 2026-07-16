@@ -4,6 +4,7 @@ import base64
 import copy
 import json
 import os
+import re
 import stat
 from pathlib import Path
 
@@ -19,11 +20,16 @@ from scripts.validate_genai_shell_aws import (
     write_evidence_atomic,
 )
 from scripts.check_oidc_workflows import (
+    AWS_PERFORMANCE,
+    DESTROY,
+    OIDC_ACTION_REPOSITORY,
+    OIDC_PREFLIGHT,
     OAuthConfigError,
     escape_github_command_value,
     main as oidc_main,
     validate_bootstrap_policy,
     validate_deploy_workflow,
+    validate_oidc_credential_actions,
     validate_sensitive_logging_source,
     write_oauth_curl_config,
 )
@@ -415,6 +421,26 @@ def workflow() -> str:
     return DEPLOY_WORKFLOW.read_text(encoding="utf-8")
 
 
+OIDC_ACTION_PATTERN = re.compile(
+    rf"(?m)^(?P<indent>\s*uses:\s*){re.escape(OIDC_ACTION_REPOSITORY)}@[^\s#]+\s*$"
+)
+
+
+def replace_oidc_action(content: str, reference: str) -> str:
+    matches = list(OIDC_ACTION_PATTERN.finditer(content))
+    assert len(matches) == 1, "fixture must contain exactly one credential action"
+    return OIDC_ACTION_PATTERN.sub(
+        rf"\g<indent>{OIDC_ACTION_REPOSITORY}@{reference}", content, count=1
+    )
+
+
+def oidc_workflows() -> dict[Path, str]:
+    return {
+        path: path.read_text(encoding="utf-8")
+        for path in (OIDC_PREFLIGHT, AWS_PERFORMANCE, DEPLOY_WORKFLOW, DESTROY)
+    }
+
+
 def bootstrap() -> str:
     return BOOTSTRAP_TEMPLATE.read_text(encoding="utf-8")
 
@@ -470,6 +496,114 @@ def test_bootstrap_guardrail_rejects_missing_or_broadened_cleanup_access(
 
 def test_current_deploy_workflow_passes_static_guardrails():
     assert validate_deploy_workflow(workflow()) == []
+
+
+@pytest.mark.parametrize("reference", ["v6.2.2", "v6.2.3", "v6.3.0", "v6.10.1"])
+def test_oidc_action_accepts_supported_prefixed_versions(reference: str):
+    contents = {
+        path: replace_oidc_action(content, reference)
+        for path, content in oidc_workflows().items()
+    }
+    assert validate_oidc_credential_actions(contents) == []
+
+
+@pytest.mark.parametrize("reference", ["6.2.2", "6.2.3", "6.3.0"])
+def test_oidc_action_accepts_official_unprefixed_versions(reference: str):
+    contents = {
+        path: replace_oidc_action(content, reference)
+        for path, content in oidc_workflows().items()
+    }
+    assert validate_oidc_credential_actions(contents) == []
+
+
+@pytest.mark.parametrize(
+    ("reference", "message"),
+    [
+        ("v6.1.0", "version must be at least 6.2.2"),
+        ("v6.2.1", "version must be at least 6.2.2"),
+        ("v5.9.9", "major must be 6"),
+        ("v7.0.0", "major must be 6"),
+        ("v6", "must use a full semantic version"),
+        ("v6.2", "must use a full semantic version"),
+        ("v6.2.2-beta", "must use a full semantic version"),
+        ("main", "must use a full semantic version"),
+        ("latest", "must use a full semantic version"),
+        ("a" * 40, "must use a full semantic version"),
+        ("release-v6.2.2", "must use a full semantic version"),
+    ],
+)
+def test_oidc_action_rejects_unsupported_references(reference: str, message: str):
+    errors = validate_oidc_credential_actions(
+        {"workflow": replace_oidc_action(workflow(), reference)}
+    )
+    assert any(message in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "repository", ["example/configure-aws-credentials", "aws-actions/credentials"]
+)
+def test_oidc_action_rejects_alternative_repository(repository: str):
+    mutated = workflow().replace(OIDC_ACTION_REPOSITORY, repository, 1)
+    errors = validate_oidc_credential_actions({"workflow": mutated})
+    assert any("must use the official repository" in error for error in errors)
+
+
+def test_oidc_action_rejects_missing_or_duplicate_action():
+    current = workflow()
+    action_line = OIDC_ACTION_PATTERN.search(current)
+    assert action_line is not None
+    missing = OIDC_ACTION_PATTERN.sub("", current, count=1)
+    duplicate = current.replace(action_line.group(0), f"{action_line.group(0)}\n{action_line.group(0)}", 1)
+    assert any(
+        "OIDC credential action is required" in error
+        for error in validate_oidc_credential_actions({"workflow": missing})
+    )
+    assert any(
+        "must appear exactly once per workflow" in error
+        for error in validate_oidc_credential_actions({"workflow": duplicate})
+    )
+
+
+def test_oidc_action_rejects_inconsistent_versions_and_styles():
+    contents = oidc_workflows()
+    paths = list(contents)
+    inconsistent = {
+        path: replace_oidc_action(content, "v6.2.3" if path == paths[0] else "v6.2.2")
+        for path, content in contents.items()
+    }
+    mixed_style = {
+        path: replace_oidc_action(content, "6.2.2" if path == paths[0] else "v6.2.2")
+        for path, content in contents.items()
+    }
+    for candidate in (inconsistent, mixed_style):
+        assert any(
+            "version must be consistent across workflows" in error
+            for error in validate_oidc_credential_actions(candidate)
+        )
+
+
+@pytest.mark.parametrize(
+    ("old", "message"),
+    [
+        ("          role-to-assume:", "OIDC credential action requires role-to-assume"),
+        ("          aws-region:", "OIDC credential action requires aws-region"),
+        ("          allowed-account-ids:", "OIDC credential action requires allowed-account-ids"),
+        ("  id-token: write", "permissions.id-token must be write"),
+    ],
+)
+def test_oidc_controls_remain_required(old: str, message: str):
+    mutated = workflow().replace(old, old.replace(":", "-removed:", 1), 1)
+    errors = validate_deploy_workflow(mutated)
+    assert any(message in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "addition", ["          aws-access-key-id: synthetic\n", "          aws-secret-access-key: synthetic\n"]
+)
+def test_oidc_controls_reject_static_credentials(addition: str):
+    mutated = workflow().replace("          role-to-assume:", addition + "          role-to-assume:", 1)
+    errors = validate_deploy_workflow(mutated)
+    assert any("static AWS" in error for error in errors)
 
 
 @pytest.mark.parametrize(
@@ -529,7 +663,6 @@ def test_cleanup_never_reads_log_events_or_prints_get_function_response():
     [
         ("VALIDATE-GENAI-SHELL-AND-DESTROY", "WRONG-CONFIRMATION"),
         ("environment: aws-ephemeral", "environment: missing"),
-        ("aws-actions/configure-aws-credentials@v6.1.0", "actions/checkout@v4"),
         (
             "id: destroy\n        if: always() && steps.preflight.outcome == 'success' && steps.aws_credentials.outcome == 'success'",
             "id: destroy\n        if: success()",
@@ -583,7 +716,6 @@ def test_workflow_guardrail_rejects_automatic_tracing_or_bedrock(addition: str):
         ('test "$CONFIRMATION" = "DEPLOY-AND-DESTROY"', 'test "$CONFIRMATION" = "VALIDATE-GENAI-SHELL-AND-DESTROY"'),
         ('test "$CONFIRMATION" = "VALIDATE-GENAI-SHELL-AND-DESTROY"', 'test "$CONFIRMATION" = "DEPLOY-AND-DESTROY"'),
         ('if [ "$RUN_SMOKE_TEST" != "true" ]', 'if [ "$RUN_SMOKE_TEST" = "false" ]'),
-        ("    steps:\n", "    steps:\n      - uses: aws-actions/configure-aws-credentials@v6.1.0\n"),
         ("steps.preflight.outputs.profile == 'legacy' && steps.aws_credentials.outcome", "steps.aws_credentials.outcome"),
         ("always() && steps.preflight.outcome == 'success' && steps.preflight.outputs.profile == 'legacy' && steps.aws_credentials.outcome", "failure() && steps.aws_credentials.outcome"),
         ("steps.preflight.outputs.profile == 'legacy' && inputs.run_smoke_test", "inputs.run_smoke_test"),

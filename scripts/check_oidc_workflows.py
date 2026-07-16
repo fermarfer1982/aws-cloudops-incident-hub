@@ -15,11 +15,97 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / ".github/workflows/deploy-ephemeral.yml"
 DESTROY = ROOT / ".github/workflows/destroy-ephemeral.yml"
+OIDC_PREFLIGHT = ROOT / ".github/workflows/aws-oidc-preflight.yml"
+AWS_PERFORMANCE = ROOT / ".github/workflows/aws-performance-ephemeral.yml"
 BOOTSTRAP = ROOT / "bootstrap/github-oidc-role.yml"
+OIDC_WORKFLOWS = (OIDC_PREFLIGHT, AWS_PERFORMANCE, DEPLOY, DESTROY)
+OIDC_ACTION_REPOSITORY = "aws-actions/configure-aws-credentials"
+OIDC_ACTION_MINIMUM_VERSION = (6, 2, 2)
+# The unprefixed form is also an official tag style and is emitted by Dependabot.
+OIDC_ACTION_VERSION_PATTERN = re.compile(r"(?P<prefix>v?)(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)")
 
 
 class OAuthConfigError(RuntimeError):
     """A stable error that never includes credential material."""
+
+
+def validate_oidc_credential_actions(workflows: dict[Path | str, str]) -> list[str]:
+    """Validate the official credential action and its coherent semver policy."""
+    errors: list[str] = []
+    references: list[str] = []
+    step_pattern = re.compile(
+        r"(?ms)^\s*- name: Configure temporary AWS credentials through OIDC\s*$"
+        r"(?P<body>.*?)(?=^\s*- name:|\Z)"
+    )
+    uses_pattern = re.compile(r"(?m)^\s*uses:\s*([^@\s]+)@([^\s#]+)\s*$")
+
+    for path, workflow in workflows.items():
+        label = str(path)
+        step = step_pattern.search(workflow)
+        if step is None:
+            errors.append(f"{label}: OIDC credential action is required")
+            continue
+        matches = uses_pattern.findall(step.group("body"))
+        if not matches:
+            errors.append(f"{label}: OIDC credential action is required")
+            continue
+        if len(matches) != 1:
+            errors.append(
+                f"{label}: OIDC credential action must appear exactly once per workflow"
+            )
+            continue
+        step_body = step.group("body")
+        for token, message in (
+            ("role-to-assume:", "OIDC credential action requires role-to-assume"),
+            ("aws-region:", "OIDC credential action requires aws-region"),
+            ("allowed-account-ids:", "OIDC credential action requires allowed-account-ids"),
+        ):
+            if token not in step_body:
+                errors.append(f"{label}: {message}")
+        if any(
+            token in step_body.lower()
+            for token in ("aws-access-key-id:", "aws-secret-access-key:", "aws-session-token:")
+        ):
+            errors.append(f"{label}: static AWS credential configuration is forbidden")
+        repository, reference = matches[0]
+        if repository != OIDC_ACTION_REPOSITORY:
+            errors.append(
+                f"{label}: OIDC credential action must use the official repository"
+            )
+            continue
+        official_references = [
+            match
+            for match in uses_pattern.findall(workflow)
+            if match[0] == OIDC_ACTION_REPOSITORY
+        ]
+        if len(official_references) != 1:
+            errors.append(
+                f"{label}: OIDC credential action must appear exactly once per workflow"
+            )
+            continue
+        version_match = OIDC_ACTION_VERSION_PATTERN.fullmatch(reference)
+        if version_match is None:
+            errors.append(
+                f"{label}: OIDC credential action must use a full semantic version"
+            )
+            continue
+        version = tuple(
+            int(version_match.group(component))
+            for component in ("major", "minor", "patch")
+        )
+        if version[0] != 6:
+            errors.append(f"{label}: OIDC credential action major must be 6")
+            continue
+        if version < OIDC_ACTION_MINIMUM_VERSION:
+            errors.append(
+                f"{label}: OIDC credential action version must be at least 6.2.2"
+            )
+            continue
+        references.append(reference)
+
+    if len(references) == len(workflows) and len(set(references)) != 1:
+        errors.append("OIDC credential action version must be consistent across workflows")
+    return errors
 
 
 def escape_github_command_value(value: str) -> str:
@@ -627,6 +713,7 @@ def validate_deploy_workflow(workflow: str) -> list[str]:
     permissions = {line.strip() for line in _top_level_block(workflow, "permissions")}
     require("contents: read" in permissions, "permissions.contents must be read")
     require("id-token: write" in permissions, "permissions.id-token must be write")
+    errors.extend(validate_oidc_credential_actions({"deploy workflow": workflow}))
     required_tokens = {
         "environment: aws-ephemeral": "aws-ephemeral Environment is required",
         "github.ref == 'refs/heads/main'": "workflow must run only from main",
@@ -634,7 +721,6 @@ def validate_deploy_workflow(workflow: str) -> list[str]:
         "DEPLOY-AND-DESTROY": "explicit legacy confirmation is required",
         "group: aws-ephemeral-${{ github.repository }}": "protected concurrency group is required",
         "cancel-in-progress: false": "concurrent executions must not be cancelled",
-        "aws-actions/configure-aws-credentials@v6.1.0": "OIDC credential action is required",
         "required reviewers": "required-reviewer governance warning is required",
         "write-oauth-curl-config": "safe OAuth credential generator is required",
         "::add-mask::$FULL_TOKEN": "full token must be masked",
@@ -1004,7 +1090,7 @@ def validate_deploy_workflow(workflow: str) -> list[str]:
 
 def validate_repository() -> int:
     errors: list[str] = []
-    for path in (DEPLOY, DESTROY, BOOTSTRAP):
+    for path in (*OIDC_WORKFLOWS, BOOTSTRAP):
         if not path.is_file():
             errors.append(f"Missing required file: {path}")
     if errors:
@@ -1014,6 +1100,10 @@ def validate_repository() -> int:
     deploy = DEPLOY.read_text(encoding="utf-8")
     destroy = DESTROY.read_text(encoding="utf-8")
     bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
+    workflow_contents = {
+        path: path.read_text(encoding="utf-8") for path in OIDC_WORKFLOWS
+    }
+    errors.extend(validate_oidc_credential_actions(workflow_contents))
     errors.extend(f"{DEPLOY}: {error}" for error in validate_deploy_workflow(deploy))
     source = Path(__file__).read_text(encoding="utf-8")
     errors.extend(
@@ -1028,7 +1118,6 @@ def validate_repository() -> int:
             "id-token: write",
             "contents: read",
             "environment: aws-ephemeral",
-            "aws-actions/configure-aws-credentials@v6.1.0",
             "allowed-account-ids:",
             "github.ref == 'refs/heads/main'",
             "cancel-in-progress: false",
