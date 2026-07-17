@@ -1,6 +1,7 @@
 import json
 import re
 
+import pytest
 from aws_cdk import App
 from aws_cdk.assertions import Template
 
@@ -11,6 +12,68 @@ from cloudops_infra.stack import CloudOpsIncidentHubStack
 GENAI_FUNCTION_NAME = "cloudops-genai-summary-function"
 GENAI_ROUTE_KEY = "POST /incidents/{incident_id}/ai-summary"
 SUMMARIZE_SCOPE = "cloudops-incident-hub/incidents.summarize"
+ACCOUNT_ID_PATTERN = re.compile(r"(?<![0-9])[0-9]{12}(?![0-9])")
+ACCOUNT_ARN_PATTERN = re.compile(
+    r"arn:(?:aws|aws-us-gov|aws-cn|\$\{AWS::Partition\}):"
+    r"[^:]+:(?:[^:]*|\$\{AWS::Region\}):[0-9]{12}:"
+)
+ACCOUNT_SENSITIVE_KEYS = {
+    "account",
+    "accountid",
+    "awsaccountid",
+    "allowedaccountids",
+    "sourceaccount",
+    "aws:sourceaccount",
+    "assumerolepolicydocument",
+    "policydocument",
+    "principal",
+    "resource",
+    "condition",
+    "outputs",
+}
+
+
+def _safe_path_component(value: object) -> str:
+    return re.sub(r"[^A-Za-z0-9_.:-]", "?", str(value))
+
+
+def _strings_in(value: object, path: tuple[str, ...]):
+    if isinstance(value, str):
+        yield path, value
+    elif isinstance(value, dict):
+        for key in sorted(value, key=str):
+            yield from _strings_in(
+                value[key], (*path, _safe_path_component(key))
+            )
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            yield from _strings_in(item, (*path, str(index)))
+
+
+def literal_account_id_paths(template: dict) -> list[str]:
+    """Return deterministic paths containing literal AWS account identifiers."""
+    matches: set[str] = set()
+
+    for path, value in _strings_in(template, ("template",)):
+        if ACCOUNT_ARN_PATTERN.search(value):
+            matches.add(".".join(path))
+
+    def inspect_sensitive(value: object, path: tuple[str, ...]) -> None:
+        if isinstance(value, dict):
+            for key in sorted(value, key=str):
+                key_path = (*path, _safe_path_component(key))
+                child = value[key]
+                if str(key).lower() in ACCOUNT_SENSITIVE_KEYS:
+                    for string_path, text in _strings_in(child, key_path):
+                        if ACCOUNT_ID_PATTERN.search(text):
+                            matches.add(".".join(string_path))
+                inspect_sensitive(child, key_path)
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                inspect_sensitive(item, (*path, str(index)))
+
+    inspect_sensitive(template, ("template",))
+    return sorted(matches)
 
 
 def synthesize(*, persistent_environment: bool = False) -> dict:
@@ -350,7 +413,7 @@ def test_template_has_no_bedrock_configuration_credentials_or_sensitive_outputs(
     ):
         assert forbidden not in lower
     assert "arn:aws:bedrock" not in lower
-    assert not re.search(r"(?<![0-9])[0-9]{12}(?![0-9])", rendered)
+    assert literal_account_id_paths(template) == []
 
     outputs = template.get("Outputs", {})
     forbidden_output_parts = ("rolearn", "tablearn", "model", "inference", "loggrouparn")
@@ -363,3 +426,165 @@ def test_template_has_no_bedrock_configuration_credentials_or_sensitive_outputs(
 
 def test_synthesized_template_is_deterministic_without_genai_context():
     assert synthesize() == synthesize()
+
+
+def test_account_detection_ignores_opaque_asset_and_nonsensitive_values():
+    template = synthesize()
+    template["Resources"]["SyntheticAsset"] = {
+        "Type": "Custom::SyntheticAsset",
+        "Properties": {
+            "S3Key": "asset.123456789012abcdef.zip",
+            "DelimitedS3Key": "asset.123456789012.zip",
+            "Filename": "report-123456789012.json",
+            "OpaqueValue": "123456789012",
+            "Checksum": "sha256-123456789012-deadbeef",
+        },
+    }
+    template["Resources"]["Synthetic123456789012Asset"] = {
+        "Type": "Custom::SyntheticAsset"
+    }
+
+    assert literal_account_id_paths(template) == []
+
+
+@pytest.mark.parametrize(
+    ("fragment", "expected_path"),
+    [
+        (
+            {
+                "Principal": {
+                    "AWS": "arn:aws:iam::123456789012:root"
+                }
+            },
+            "Principal.AWS",
+        ),
+        (
+            {
+                "Resource": (
+                    "arn:aws:dynamodb:eu-west-1:123456789012:table/example"
+                )
+            },
+            "Resource",
+        ),
+        (
+            {"Condition": {"StringEquals": {"aws:SourceAccount": "123456789012"}}},
+            "Condition.StringEquals.aws:SourceAccount",
+        ),
+        ({"AccountId": "123456789012"}, "AccountId"),
+        ({"AWSAccountId": "123456789012"}, "AWSAccountId"),
+        ({"AllowedAccountIds": ["123456789012"]}, "AllowedAccountIds.0"),
+        (
+            {"Outputs": {"AccountId": {"Value": "123456789012"}}},
+            "Outputs.AccountId.Value",
+        ),
+        (
+            {
+                "Opaque": (
+                    "arn:aws:lambda:eu-west-1:123456789012:function:example"
+                )
+            },
+            "Opaque",
+        ),
+        (
+            {"Principal": "arn:aws-us-gov:iam::123456789012:role/example"},
+            "Principal",
+        ),
+        (
+            {
+                "Fn::Sub": (
+                    "arn:${AWS::Partition}:iam::123456789012:role/example"
+                )
+            },
+            "Fn::Sub",
+        ),
+        (
+            {
+                "Fn::Sub": (
+                    "arn:${AWS::Partition}:lambda:eu-west-1:"
+                    "123456789012:function:example"
+                )
+            },
+            "Fn::Sub",
+        ),
+        (
+            {
+                "Fn::Sub": [
+                    "arn:${AWS::Partition}:iam::123456789012:role/${RoleName}",
+                    {"RoleName": "example"},
+                ]
+            },
+            "Fn::Sub.0",
+        ),
+        (
+            {
+                "Properties": {
+                    "TargetArn": {
+                        "Fn::Sub": (
+                            "arn:${AWS::Partition}:sns:${AWS::Region}:"
+                            "123456789012:topic"
+                        )
+                    }
+                }
+            },
+            "Properties.TargetArn.Fn::Sub",
+        ),
+    ],
+)
+def test_account_detection_finds_literals_in_sensitive_surfaces(
+    fragment: dict, expected_path: str
+):
+    paths = literal_account_id_paths(fragment)
+
+    assert any(path.endswith(expected_path) for path in paths), paths
+
+
+@pytest.mark.parametrize(
+    "fragment",
+    [
+        {"Value": "${AWS::AccountId}"},
+        {"Value": {"Ref": "AWS::AccountId"}},
+        {
+            "Value": {
+                "Fn::Sub": (
+                    "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/example"
+                )
+            }
+        },
+        {
+            "Fn::Sub": [
+                "arn:${AWS::Partition}:iam::${Account}:role/example",
+                {"Account": {"Ref": "AWS::AccountId"}},
+            ]
+        },
+        {
+            "Fn::Join": [
+                "",
+                [
+                    "arn:",
+                    {"Ref": "AWS::Partition"},
+                    ":iam::",
+                    {"Ref": "AWS::AccountId"},
+                    ":role/example",
+                ],
+            ]
+        },
+        {"Resource": {"Fn::GetAtt": ["ExampleRole", "Arn"]}},
+        {"Resource": {"Fn::Join": ["", [{"Ref": "ExampleArn"}]]}},
+    ],
+)
+def test_account_detection_allows_pseudoparameters_and_intrinsics(fragment: dict):
+    assert literal_account_id_paths(fragment) == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "arn:${AWS::Partition}:iam::12345678901:role/example",
+        "arn:${AWS::Partition}:iam::0123456789012:role/example",
+        "arn:${AWS::Partition}:iam::1234567890123:role/example",
+        "arn:${AWS::Partition}:iam:123456789012::role/example",
+        "prefix-123456789012-suffix",
+    ],
+)
+def test_account_detection_rejects_nonaccount_segments_and_non_arns(value: str):
+    assert literal_account_id_paths({"Fn::Sub": value}) == []
