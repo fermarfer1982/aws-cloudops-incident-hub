@@ -14,7 +14,8 @@ GENAI_ROUTE_KEY = "POST /incidents/{incident_id}/ai-summary"
 SUMMARIZE_SCOPE = "cloudops-incident-hub/incidents.summarize"
 ACCOUNT_ID_PATTERN = re.compile(r"(?<![0-9])[0-9]{12}(?![0-9])")
 ACCOUNT_ARN_PATTERN = re.compile(
-    r"arn:(?:aws|aws-us-gov|aws-cn):[^:]+:[^:]*:[0-9]{12}:"
+    r"arn:(?:aws|aws-us-gov|aws-cn|\$\{AWS::Partition\}):"
+    r"[^:]+:(?:[^:]*|\$\{AWS::Region\}):[0-9]{12}:"
 )
 ACCOUNT_SENSITIVE_KEYS = {
     "account",
@@ -488,6 +489,45 @@ def test_account_detection_ignores_opaque_asset_and_nonsensitive_values():
             {"Principal": "arn:aws-us-gov:iam::123456789012:role/example"},
             "Principal",
         ),
+        (
+            {
+                "Fn::Sub": (
+                    "arn:${AWS::Partition}:iam::123456789012:role/example"
+                )
+            },
+            "Fn::Sub",
+        ),
+        (
+            {
+                "Fn::Sub": (
+                    "arn:${AWS::Partition}:lambda:eu-west-1:"
+                    "123456789012:function:example"
+                )
+            },
+            "Fn::Sub",
+        ),
+        (
+            {
+                "Fn::Sub": [
+                    "arn:${AWS::Partition}:iam::123456789012:role/${RoleName}",
+                    {"RoleName": "example"},
+                ]
+            },
+            "Fn::Sub.0",
+        ),
+        (
+            {
+                "Properties": {
+                    "TargetArn": {
+                        "Fn::Sub": (
+                            "arn:${AWS::Partition}:sns:${AWS::Region}:"
+                            "123456789012:topic"
+                        )
+                    }
+                }
+            },
+            "Properties.TargetArn.Fn::Sub",
+        ),
     ],
 )
 def test_account_detection_finds_literals_in_sensitive_surfaces(
@@ -510,9 +550,41 @@ def test_account_detection_finds_literals_in_sensitive_surfaces(
                 )
             }
         },
+        {
+            "Fn::Sub": [
+                "arn:${AWS::Partition}:iam::${Account}:role/example",
+                {"Account": {"Ref": "AWS::AccountId"}},
+            ]
+        },
+        {
+            "Fn::Join": [
+                "",
+                [
+                    "arn:",
+                    {"Ref": "AWS::Partition"},
+                    ":iam::",
+                    {"Ref": "AWS::AccountId"},
+                    ":role/example",
+                ],
+            ]
+        },
         {"Resource": {"Fn::GetAtt": ["ExampleRole", "Arn"]}},
         {"Resource": {"Fn::Join": ["", [{"Ref": "ExampleArn"}]]}},
     ],
 )
 def test_account_detection_allows_pseudoparameters_and_intrinsics(fragment: dict):
     assert literal_account_id_paths(fragment) == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "arn:${AWS::Partition}:iam::12345678901:role/example",
+        "arn:${AWS::Partition}:iam::0123456789012:role/example",
+        "arn:${AWS::Partition}:iam::1234567890123:role/example",
+        "arn:${AWS::Partition}:iam:123456789012::role/example",
+        "prefix-123456789012-suffix",
+    ],
+)
+def test_account_detection_rejects_nonaccount_segments_and_non_arns(value: str):
+    assert literal_account_id_paths({"Fn::Sub": value}) == []
