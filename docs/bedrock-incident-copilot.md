@@ -343,8 +343,15 @@ sensibles.
 - Tokens, latencia, errores, throttling y coste estimado por solicitud.
 - Estimaciones futuras por resumen y por 1.000 resúmenes, con supuestos versionados.
 - Budgets y alarmas antes de pruebas AWS.
-- Concurrencia limitada y prohibición de pruebas masivas fuera de un workflow
-  manual, controlado, aprobado, acotado y con limpieza verificada.
+- Feature y provider desactivados, sin model ID ni permisos Bedrock.
+- Timeout de 15 segundos, memoria de 256 MB, autenticación y scope dedicado.
+- Workflow manual aprobado, despliegue efímero, destrucción y cleanup verificados,
+  con alarmas nativas.
+- El shell cerrado no configura concurrencia reservada y utiliza el pool no
+  reservado de la cuenta, evitando que una reserva fija impida desplegar en cuentas
+  de laboratorio con cuotas reducidas. Esto no aprueba escalado productivo: antes
+  de habilitar Bedrock deben decidirse rate limiting, concurrencia, cuota y
+  presupuesto.
 - Caching solo tras evaluar privacidad, coste, coherencia e invalidación.
 
 ## 21. Estrategia de pruebas
@@ -431,11 +438,8 @@ del shell de infraestructura GenAI con el flujo **deployed + authorized + disabl
 OIDC y el GitHub Environment `aws-ephemeral`, y exige la confirmación literal
 `VALIDATE-GENAI-SHELL-AND-DESTROY`.
 
-Antes de ejecutar esta validación, un administrador debe configurar al menos un
-required reviewer en `aws-ephemeral`. Actualmente esa protection rule sigue
-pendiente. La confirmación textual no sustituye la aprobación independiente del
-Environment y el workflow no debe ejecutarse hasta completar esa configuración
-administrativa.
+El Environment `aws-ephemeral` ya tiene protección efectiva y required reviewer.
+La confirmación textual no sustituye la aprobación del Environment.
 
 El despliegue crea de forma condicional un único cliente M2M efímero, con secret y
 grant `client_credentials`, y tokens de 15 minutos. Un token solicita exactamente
@@ -464,12 +468,22 @@ escritura. Ambas autorizaciones se usan solo para verificar el cleanup. Tokens,
 secret, payload, incidente, outputs,
 plantillas y logs brutos permanecen fuera de la evidencia.
 
-La versión actualizada de `bootstrap/github-oidc-role.yml` debe aplicarse
-administrativamente al stack de bootstrap antes de ejecutar el workflow. Modificar
-el archivo del repositorio no actualiza por sí solo el rol OIDC ya desplegado. Este
-prerrequisito y la configuración de al menos un required reviewer en
-`aws-ephemeral` son obligatorios; hasta cumplir ambos, el workflow no debe
-ejecutarse.
+La versión actualizada de `bootstrap/github-oidc-role.yml` ya fue aplicada
+administrativamente al stack de bootstrap. El rol OIDC desplegado conserva el
+trust restringido al repositorio y al Environment `aws-ephemeral`.
+
+### Primer intento AWS controlado — 17 de julio de 2026
+
+OIDC, la verificación de identidad y el synth finalizaron correctamente. El deploy
+falló antes de completar el stack porque la reserva fija de concurrencia era
+incompatible con la capacidad disponible de la cuenta. Las validaciones
+funcionales no se ejecutaron y no se generó la evidencia saneada final.
+
+El rollback y el destroy se completaron, y se verificó la ausencia final del stack,
+la Lambda GenAI y su Log Group. Bedrock no fue invocado. El resultado fue un fallo
+seguro, no una validación AWS exitosa. La corrección elimina la concurrencia
+reservada; un nuevo intento queda pendiente de revisión, merge y autorización
+explícita.
 
 La validación demuestra únicamente que el shell se despliega, autoriza, permanece
 desactivado y se destruye; no constituye una integración Amazon Bedrock validada.

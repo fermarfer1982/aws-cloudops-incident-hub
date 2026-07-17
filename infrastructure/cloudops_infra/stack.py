@@ -390,7 +390,6 @@ class CloudOpsIncidentHubStack(Stack):
             },
             timeout=Duration.seconds(15),
             memory_size=256,
-            reserved_concurrent_executions=1,
             log_group=genai_log_group,
             role=genai_role,
             tracing=lambda_.Tracing.DISABLED,

@@ -123,6 +123,8 @@ def validate_template(template: Mapping[str, Any]) -> list[str]:
     ]
     function_id, function = _single(function_matches, "dedicated Lambda")
     properties = function.get("Properties", {})
+    if "ReservedConcurrentExecutions" in properties:
+        _fail("reserved concurrency absent")
     role_ref = properties.get("Role", {}).get("Fn::GetAtt")
     if not isinstance(role_ref, list) or len(role_ref) != 2 or role_ref[1] != "Arn":
         _fail("independent Lambda role reference")

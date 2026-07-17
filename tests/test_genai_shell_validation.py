@@ -175,6 +175,27 @@ def test_valid_template_follows_references_without_fixed_logical_ids():
     )
 
 
+@pytest.mark.parametrize("reserved_concurrency", [0, 1, 2])
+def test_rejects_genai_reserved_concurrency(reserved_concurrency: int):
+    template = valid_template()
+    genai_function(template)["Properties"]["ReservedConcurrentExecutions"] = (
+        reserved_concurrency
+    )
+
+    with pytest.raises(ValidationError, match="reserved concurrency absent"):
+        validate_template(template)
+
+
+def test_ignores_reserved_concurrency_property_on_non_lambda_resource():
+    template = valid_template()
+    template["Resources"]["SyntheticResource"] = {
+        "Type": "Custom::Synthetic",
+        "Properties": {"ReservedConcurrentExecutions": 1},
+    }
+
+    assert validate_template(template) == sorted(EXPECTED_ACTIONS)
+
+
 def test_rejects_managed_policy_arns():
     template = valid_template()
     genai_role(template)["Properties"]["ManagedPolicyArns"] = ["managed-policy"]
