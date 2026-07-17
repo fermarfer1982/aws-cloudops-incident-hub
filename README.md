@@ -308,14 +308,21 @@ solo lectura. Incluye un adaptador testeable para Amazon Bedrock Converse API, p
 no hay modelo aprobado, acceso concedido, despliegue ni evidencia de inferencia
 real. La infraestructura expresada en CDK incorpora un shell cerrado: una Lambda
 GenAI dedicada, la ruta `POST /incidents/{incident_id}/ai-summary` protegida por el
-scope `cloudops-incident-hub/incidents.summarize`, concurrencia reservada igual a
-uno y un rol limitado a `dynamodb:GetItem`. La función configura
+scope `cloudops-incident-hub/incidents.summarize` y un rol limitado a
+`dynamodb:GetItem`. El shell no reserva capacidad Lambda y utiliza el pool de
+concurrencia no reservada de la cuenta. La función configura
 `AI_SUMMARY_ENABLED=false` y `AI_SUMMARY_PROVIDER=disabled`, y no contiene permisos
 Bedrock. `FakeBedrockClient` sigue produciendo una salida
 determinista que **no procede de un modelo fundacional ni de una inferencia real**.
 La feature y el proveedor real están desactivados por defecto,
 [ADR-013](docs/adr/013-amazon-bedrock-incident-copilot.md) permanece **Proposed** y
 el proyecto continúa **not production-ready**.
+
+El primer intento AWS controlado falló de forma segura porque una reserva fija era
+incompatible con la capacidad regional disponible de la cuenta. El rollback, la
+destrucción y el cleanup se completaron y se verificó la ausencia final de los
+recursos GenAI. Las validaciones funcionales no llegaron a ejecutarse, por lo que
+todavía no existe evidencia AWS funcional exitosa del shell.
 
 El repositorio incluye además un arnés local y determinista de evaluación con
 casos y predicciones completamente sintéticos. Valida el esquema, el grounding por

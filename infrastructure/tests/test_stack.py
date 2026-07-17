@@ -93,7 +93,7 @@ def test_dynamodb_tables_are_ephemeral():
     assert all(table["UpdateReplacePolicy"] == "Delete" for table in tables)
 
 
-def test_lambdas_have_bounded_compute_and_only_genai_has_reserved_concurrency():
+def test_lambdas_have_bounded_compute_without_reserved_concurrency():
     resources = get_template().to_json()["Resources"]
     functions = [
         resource["Properties"]
@@ -112,10 +112,7 @@ def test_lambdas_have_bounded_compute_and_only_genai_has_reserved_concurrency():
         assert "TABLE_NAME" in variables
         assert "METRICS_TABLE_NAME" in variables
 
-        if function.get("FunctionName") == "cloudops-genai-summary-function":
-            assert function["ReservedConcurrentExecutions"] == 1
-        else:
-            assert "ReservedConcurrentExecutions" not in function
+        assert "ReservedConcurrentExecutions" not in function
 
 
 def test_processing_queue_has_encryption_and_dlq():

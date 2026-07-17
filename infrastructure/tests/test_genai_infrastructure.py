@@ -143,7 +143,6 @@ def test_dedicated_genai_lambda_has_bounded_closed_configuration():
     assert properties["Handler"] == "app.main.handler"
     assert properties["MemorySize"] == 256
     assert properties["Timeout"] == 15
-    assert properties["ReservedConcurrentExecutions"] == 1
     assert "TracingConfig" not in properties
     assert "DeadLetterConfig" not in properties
     assert "EventInvokeConfig" not in properties
@@ -160,6 +159,13 @@ def test_dedicated_genai_lambda_has_bounded_closed_configuration():
         for identifier, resource in functions.items()
         if resource is api_function
     )
+
+
+def test_closed_genai_shell_does_not_reserve_regional_concurrency():
+    template = synthesize()
+    _, function = genai_function(template)
+
+    assert "ReservedConcurrentExecutions" not in function["Properties"]
 
 
 def test_genai_environment_is_exactly_closed_and_uses_table_references():
