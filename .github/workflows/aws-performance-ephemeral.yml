@@ -99,7 +99,7 @@ jobs:
           case "$MAX_RPS" in 1|2|5|8) ;; *) exit 1 ;; esac
           case "$WRITE_PERCENT" in 0|1|5) ;; *) exit 1 ;; esac
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:
