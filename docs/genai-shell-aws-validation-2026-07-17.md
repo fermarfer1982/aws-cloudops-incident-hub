@@ -42,6 +42,15 @@ automáticas, demuestra production readiness o cambia ADR-013 a Accepted.
 
 ### Trazabilidad
 
+El archivo `docs/evidence/genai-shell-aws-validation-2026-07-17.json` es una copia
+validada byte a byte de `genai-shell-validation.json`, único archivo
+contenido en el artefacto de GitHub Actions
+`genai-shell-aws-validation-29584706366`, generado por el run `29584706366`.
+Antes de la extracción, el ZIP del artefacto se verificó mediante el digest
+`sha256:da0fd0507300f62f436c1fee97f7d075084b9531bd758302da1fdcb4d73a1ac0`.
+Después, el JSON extraído superó `validate_evidence`, se comparó byte a byte y se
+incorporó al repositorio sin modificaciones.
+
 - [Evidencia JSON versionada](evidence/genai-shell-aws-validation-2026-07-17.json)
 - [Workflow de despliegue efímero](../.github/workflows/deploy-ephemeral.yml)
 - [Documentación de diseño](bedrock-incident-copilot.md)
