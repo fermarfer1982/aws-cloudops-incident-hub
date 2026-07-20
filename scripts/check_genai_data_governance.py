@@ -37,6 +37,19 @@ REGION_PATTERN = re.compile(
     r"(?:central|east|north|northeast|northwest|south|southeast|southwest|west)-\d\b",
     re.IGNORECASE,
 )
+BEDROCK_ACTION = "bedrock:invokemodel"
+IAM_GRANT_PATTERN = re.compile(
+    r"\b(?:conced\w*|autoriz\w*|otorg\w*|habilit\w*|permit\w*|asign\w*|"
+    r"añad\w*|agreg\w*|inclu\w*|recib\w*|obt\w*|dispon\w*|tendr\w*|"
+    r"tien\w*|aplic\w*)\b",
+    re.IGNORECASE,
+)
+IAM_DOUBLE_NEGATION_PATTERN = re.compile(
+    r"(?:no\s+se\s+proh[ií]b\w*|no\s+est[aá]\s+prohibid\w*|"
+    r"no\s+se\s+descart\w*|nada\s+impid\w*)[^.;\n|]*"
+    r"(?:conced\w*|autoriz\w*|habilit\w*)",
+    re.IGNORECASE,
+)
 
 
 def require(condition: bool, control: str) -> None:
@@ -84,6 +97,72 @@ def strip_fenced_code_blocks(document: str) -> str:
 
     require(fence_character is None, "unterminated fenced code block")
     return "".join(sanitized)
+
+
+def split_normative_clauses(document: str) -> list[str]:
+    """Split normative prose without splitting the Bedrock action identifier."""
+    placeholder = "BEDROCK_INVOKE_MODEL_ACTION"
+    protected = re.sub(re.escape(BEDROCK_ACTION), placeholder, document, flags=re.IGNORECASE)
+    boundaries = re.compile(
+        r"(?:\r?\n|[.;|]|(?<!`)\:(?!`)|"
+        r"\b(?:pero|sin\s+embargo|no\s+obstante|aunque|en\s+cambio|también|posteriormente)\b)",
+        re.IGNORECASE,
+    )
+    return [
+        clause.replace(placeholder, BEDROCK_ACTION).strip()
+        for clause in boundaries.split(protected)
+        if clause.strip()
+    ]
+
+
+def _grant_is_locally_negated(
+    clause: str,
+    match: re.Match[str],
+    inherited_incomplete_negation: bool = False,
+) -> bool:
+    prefix = clause[: match.start()].rstrip()
+    return (inherited_incomplete_negation and not prefix) or (
+        re.search(r"\b(?:no|nunca|ni)(?:\s+se)?\s*$", prefix, re.IGNORECASE) is not None
+    )
+
+
+def _coordinated_negative_assertion(clause: str) -> bool:
+    action = re.escape(BEDROCK_ACTION)
+    grant = IAM_GRANT_PATTERN.pattern
+    normalized = re.sub(r"[`*_]", "", clause).strip()
+    patterns = (
+        rf"{action}\s+no\s+(?:se\s+)?{grant}"
+        rf"(?:\s*,\s*{grant})*(?:\s+ni\s+(?:se\s+)?{grant})?",
+        rf"no\s+(?:se\s+)?{grant}(?:\s+ni\s+(?:se\s+)?{grant})+\s+{action}",
+    )
+    return any(re.fullmatch(pattern, normalized, re.IGNORECASE) for pattern in patterns)
+
+
+def validate_bedrock_iam_assertions(policy: str) -> None:
+    action_context = False
+    incomplete_negation = False
+    for clause in split_normative_clauses(policy):
+        lower = clause.lower()
+        contains_action = BEDROCK_ACTION in lower
+        applies_to_action = contains_action or action_context
+        if applies_to_action:
+            require(
+                IAM_DOUBLE_NEGATION_PATTERN.search(clause) is None,
+                "Bedrock IAM contradiction",
+            )
+            grants = list(IAM_GRANT_PATTERN.finditer(clause))
+            if grants and not _coordinated_negative_assertion(clause):
+                require(
+                    all(
+                        _grant_is_locally_negated(clause, match, incomplete_negation)
+                        for match in grants
+                    ),
+                    "Bedrock IAM contradiction",
+                )
+        incomplete_negation = contains_action and re.search(
+            r"\b(?:no|no\s+se)\s*$", clause, re.IGNORECASE
+        ) is not None
+        action_context = contains_action
 
 
 def parse_sections(document: str) -> dict[str, str]:
@@ -351,12 +430,7 @@ def validate_contradictions(policy: str) -> None:
         r"modelo\s+seleccionado\s*:",
     ):
         require(re.search(pattern, lower) is None, "model approval contradiction")
-    for match in re.finditer(r"bedrock:invokemodel", lower):
-        context = lower[max(0, match.start() - 100) : match.end() + 100]
-        require(
-            any(negative in context for negative in ("no se concede", "no concede", "prohibid", "fuera de alcance")),
-            "Bedrock IAM contradiction",
-        )
+    validate_bedrock_iam_assertions(policy)
     for match in re.finditer(r"production-ready", lower):
         prefix = lower[max(0, match.start() - 30) : match.start()]
         require("not " in prefix or "no está " in prefix, "production readiness contradiction")

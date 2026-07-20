@@ -458,3 +458,107 @@ def test_internal_short_marker_does_not_close_long_fence():
 def test_content_after_closed_fence_is_preserved():
     text = "~~~text\nignored\n~~~\n## Normative\ncontent\n"
     assert strip_fenced_code_blocks(text) == "\n\n\n## Normative\ncontent\n"
+
+
+IAM_POLICY_TEXT = "`bedrock:InvokeModel` no se\nconcede;"
+
+
+def replace_iam_assertion(root: Path, assertion: str) -> None:
+    mutate(root, FILES[0], IAM_POLICY_TEXT, assertion + ";")
+
+
+@pytest.mark.parametrize(
+    "assertion",
+    [
+        "`bedrock:InvokeModel` no se concede; se concede `bedrock:InvokeModel`",
+        "`bedrock:InvokeModel` no se concede; sin embargo, se concede `bedrock:InvokeModel`",
+        "No se concede `bedrock:InvokeModel`. Después se autoriza `bedrock:InvokeModel`",
+        "No se concede `bedrock:InvokeModel`, pero la Lambda lo recibirá mediante `bedrock:InvokeModel`",
+        "`bedrock:InvokeModel` sigue pendiente; no obstante, queda autorizado",
+        "No se autoriza `bedrock:InvokeModel`; el rol tendrá `bedrock:InvokeModel`",
+        "No se concede `bedrock:InvokeModel`, aunque se añadirá a la política",
+        "No solo no se concede `bedrock:InvokeModel`, también se concede `bedrock:InvokeModel`",
+        "No se concede ni se autoriza inicialmente; posteriormente se habilita `bedrock:InvokeModel`",
+        "No se concede `bedrock:InvokeModel`\nSe autoriza `bedrock:InvokeModel`",
+        "- No se concede `bedrock:InvokeModel`\n- Se autoriza `bedrock:InvokeModel`",
+        "| `bedrock:InvokeModel` | No se concede |\n| `bedrock:InvokeModel` | Se autoriza |",
+        "Se concede `bedrock:InvokeModel`; después no se concede `bedrock:InvokeModel`",
+        "No se concede `bedrock:InvokeModel`; no se autoriza `bedrock:InvokeModel`; se habilita `bedrock:InvokeModel`",
+        "La Lambda recibirá `bedrock:InvokeModel`",
+        "El rol tendrá `bedrock:InvokeModel`",
+        "Se añadirá `bedrock:InvokeModel` a la política",
+        "`bedrock:InvokeModel` queda habilitado",
+    ],
+)
+def test_positive_bedrock_iam_assertion_is_rejected(repository: Path, assertion: str):
+    replace_iam_assertion(repository, assertion)
+    rejected(repository, "Bedrock IAM contradiction")
+
+
+@pytest.mark.parametrize(
+    "assertion",
+    [
+        "No se prohíbe conceder `bedrock:InvokeModel`",
+        "No está prohibido autorizar `bedrock:InvokeModel`",
+        "No se descarta habilitar `bedrock:InvokeModel`",
+        "Nada impide conceder `bedrock:InvokeModel`",
+    ],
+)
+def test_ambiguous_double_negative_iam_is_rejected(repository: Path, assertion: str):
+    replace_iam_assertion(repository, assertion)
+    rejected(repository, "Bedrock IAM contradiction")
+
+
+@pytest.mark.parametrize(
+    "assertion",
+    [
+        "`bedrock:InvokeModel` no se concede",
+        "No se concede `bedrock:InvokeModel`",
+        "No se concede ni se autoriza `bedrock:InvokeModel`",
+        "`bedrock:InvokeModel` no se concede, autoriza ni habilita",
+        "La Lambda no recibirá `bedrock:InvokeModel`",
+        "El rol no tendrá `bedrock:InvokeModel`",
+        "`bedrock:InvokeModel` permanece pendiente",
+        "`bedrock:InvokeModel` sigue prohibido",
+        "`bedrock:InvokeModel` queda fuera de alcance",
+        "No se añadirá `bedrock:InvokeModel` a ninguna política",
+    ],
+)
+def test_negative_bedrock_iam_assertion_is_valid(repository: Path, assertion: str):
+    replace_iam_assertion(repository, assertion)
+    run_guardrail(repository)
+
+
+def test_iam_grant_inside_fence_is_ignored(repository: Path):
+    path = repository / FILES[0]
+    content = path.read_text(encoding="utf-8")
+    assert "## Retención" in content
+    example = "```text\nSe concede bedrock:InvokeModel.\n```\n\n"
+    path.write_text(content.replace("## Retención", example + "## Retención", 1), encoding="utf-8")
+    run_guardrail(repository)
+
+
+def test_fenced_negative_does_not_hide_external_iam_grant(repository: Path):
+    replace_iam_assertion(
+        repository,
+        "\n```text\nNo se concede `bedrock:InvokeModel`.\n```\nSe concede `bedrock:InvokeModel`",
+    )
+    rejected(repository, "Bedrock IAM contradiction")
+
+
+def test_iam_validation_is_case_insensitive(repository: Path):
+    replace_iam_assertion(repository, "Se AuToRiZa `BEDROCK:INVOKEMODEL`")
+    rejected(repository, "Bedrock IAM contradiction")
+
+
+def test_iam_validation_handles_crlf(repository: Path):
+    replace_iam_assertion(
+        repository,
+        "No se concede `bedrock:InvokeModel`\r\nSe habilita `bedrock:InvokeModel`",
+    )
+    rejected(repository, "Bedrock IAM contradiction")
+
+
+def test_iam_validation_handles_multiple_spaces(repository: Path):
+    replace_iam_assertion(repository, "No se concede `bedrock:InvokeModel`; se   autoriza   `bedrock:InvokeModel`")
+    rejected(repository, "Bedrock IAM contradiction")
