@@ -52,6 +52,40 @@ def _read(path: Path, control: str) -> str:
         raise SystemExit(f"GenAI data governance control failed: {control}") from None
 
 
+def strip_fenced_code_blocks(document: str) -> str:
+    """Remove fenced examples while preserving their line structure."""
+    sanitized: list[str] = []
+    fence_character: str | None = None
+    fence_length = 0
+    opening = re.compile(r"^ {0,3}(`{3,}|~{3,})[^\r\n]*(?:\r\n|\r|\n)?$")
+
+    for line in document.splitlines(keepends=True):
+        line_ending_match = re.search(r"(?:\r\n|\r|\n)$", line)
+        line_ending = line_ending_match.group(0) if line_ending_match else ""
+        if fence_character is None:
+            match = opening.fullmatch(line)
+            if match:
+                marker = match.group(1)
+                fence_character = marker[0]
+                fence_length = len(marker)
+                sanitized.append(line_ending)
+            else:
+                sanitized.append(line)
+            continue
+
+        closing = re.compile(
+            rf"^ {{0,3}}{re.escape(fence_character)}{{{fence_length},}}[ \t]*"
+            rf"(?:\r\n|\r|\n)?$"
+        )
+        if closing.fullmatch(line):
+            fence_character = None
+            fence_length = 0
+        sanitized.append(line_ending)
+
+    require(fence_character is None, "unterminated fenced code block")
+    return "".join(sanitized)
+
+
 def parse_sections(document: str) -> dict[str, str]:
     lines = document.splitlines()
     require(lines and lines[0].strip() == "# Gobierno de datos para GenAI", "policy title")
@@ -330,7 +364,7 @@ def validate_contradictions(policy: str) -> None:
         r"datos\s+(?:internos|reales|empresariales)\s+(?:están\s+)?permitidos",
         r"se\s+autorizan\s+datos\s+(?:internos|reales|empresariales)",
         r"clase\s+interna\s+(?:está\s+)?permitida",
-        r"(?<!no\s)autoriza\s+(?:la\s+)?inferencia",
+        r"(?<!no\s)autoriza\s+(?:ejecutar\s+)?(?:la\s+)?inferencia",
         r"reintentar\s+automáticamente",
         r"(?:prompt|contexto|respuesta\s+bruta|texto\s+generado)[^.]{0,80}(?:se\s+persiste|puede\s+persistir|persistencia\s+permitida\s*:\s*sí)",
     )
@@ -363,16 +397,16 @@ def validate_repository_status(readme: str, backlog: str, review: str, release: 
 
 
 def run_guardrail(root: Path) -> None:
-    policy = _read(root / "docs/genai-data-governance.md", "missing policy")
-    backlog = _read(root / "docs/well-architected-backlog.md", "missing backlog")
-    review = _read(root / "docs/well-architected-review.md", "missing review")
-    design = _read(root / "docs/bedrock-incident-copilot.md", "missing design")
-    adr = _read(root / "docs/adr/013-amazon-bedrock-incident-copilot.md", "missing ADR-013")
-    readme = _read(root / "README.md", "missing README")
-    release = _read(
-        root / "docs/v1.0.0-lab-release-and-rollback.md",
-        "missing release runbook",
-    )
+    def normative(relative: str, control: str) -> str:
+        return strip_fenced_code_blocks(_read(root / relative, control))
+
+    policy = normative("docs/genai-data-governance.md", "missing policy")
+    backlog = normative("docs/well-architected-backlog.md", "missing backlog")
+    review = normative("docs/well-architected-review.md", "missing review")
+    design = normative("docs/bedrock-incident-copilot.md", "missing design")
+    adr = normative("docs/adr/013-amazon-bedrock-incident-copilot.md", "missing ADR-013")
+    readme = normative("README.md", "missing README")
+    release = normative("docs/v1.0.0-lab-release-and-rollback.md", "missing release runbook")
     sections = parse_sections(policy)
     validate_material_sections(sections)
     validate_classification(sections["Clasificación"])

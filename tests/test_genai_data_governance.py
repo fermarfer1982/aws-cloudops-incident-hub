@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.check_genai_data_governance import run_guardrail
+from scripts.check_genai_data_governance import run_guardrail, strip_fenced_code_blocks
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = (
@@ -39,6 +39,27 @@ def mutate(root: Path, relative: str, old: str, new: str) -> None:
 def rejected(root: Path, control: str) -> None:
     with pytest.raises(SystemExit, match=control):
         run_guardrail(root)
+
+
+def fence_fragment(root: Path, start: str, end: str, opening: str, closing: str) -> None:
+    path = root / FILES[0]
+    content = path.read_text(encoding="utf-8")
+    assert start in content and end in content
+    content = content.replace(start, f"{opening}\n{start}", 1)
+    content = content.replace(end, f"{end}\n{closing}", 1)
+    path.write_text(content, encoding="utf-8")
+
+
+CLASSIFICATION_HEADER = "| Clase | Definición | Permitida en primera prueba |"
+CLASSIFICATION_LAST_ROW = (
+    "| Sintética de laboratorio | Datos inventados, sin relación con personas, sistemas o empresas reales | Sí |"
+)
+ALLOWLIST_HEADER = "| Atributo | Tipo permitido | Restricción |"
+ALLOWLIST_LAST_ROW = "| `value` | number o null | Valor sintético acotado; nunca texto |"
+RETENTION_HEADER = "| Elemento | Persistencia permitida | Retención |"
+RETENTION_LAST_ROW = "| Archivos en `mirofish` | No | Deben quedar ausentes |"
+INCIDENT_FIRST = "1. Bloquear la inferencia o detener el workflow."
+INCIDENT_LAST = "8. Abrir una revisión de seguridad antes de otra ejecución."
 
 
 def test_current_repository_is_valid():
@@ -311,3 +332,129 @@ def test_duplicate_required_heading_is_rejected(repository: Path):
 def test_additional_table_column_is_rejected(repository: Path):
     mutate(repository, FILES[0], "| Atributo | Tipo permitido | Restricción |", "| Atributo | Tipo permitido | Restricción | Extra |")
     rejected(repository, "allowlist table structure")
+
+
+@pytest.mark.parametrize("opening,closing", [("```markdown", "```"), ("~~~markdown", "~~~")])
+def test_fenced_classification_table_is_rejected(repository: Path, opening: str, closing: str):
+    fence_fragment(repository, CLASSIFICATION_HEADER, CLASSIFICATION_LAST_ROW, opening, closing)
+    rejected(repository, "classification table semantics")
+
+
+def test_fenced_allowlist_table_is_rejected(repository: Path):
+    fence_fragment(repository, ALLOWLIST_HEADER, ALLOWLIST_LAST_ROW, "```markdown", "```")
+    rejected(repository, "allowlist table structure")
+
+
+def test_fenced_retention_table_is_rejected(repository: Path):
+    fence_fragment(repository, RETENTION_HEADER, RETENTION_LAST_ROW, "~~~markdown", "~~~")
+    rejected(repository, "retention table semantics")
+
+
+def test_fenced_incident_response_is_rejected(repository: Path):
+    fence_fragment(repository, INCIDENT_FIRST, INCIDENT_LAST, "```text", "```")
+    rejected(repository, "incident response semantics")
+
+
+def test_required_heading_only_inside_fence_is_rejected(repository: Path):
+    mutate(repository, FILES[0], "## Auditoría", "```markdown\n## Auditoría\n```")
+    rejected(repository, "missing heading ## Auditoría")
+
+
+def test_policy_reduced_to_fenced_examples_is_rejected(repository: Path):
+    path = repository / FILES[0]
+    original = path.read_text(encoding="utf-8")
+    path.write_text("# Gobierno de datos para GenAI\n\n```markdown\n" + original + "```\n", encoding="utf-8")
+    rejected(repository, "missing heading")
+
+
+@pytest.mark.parametrize("opening,closing", [("````markdown", "````"), ("~~~~markdown", "~~~~")])
+def test_long_fence_hides_classification_table(repository: Path, opening: str, closing: str):
+    fence_fragment(repository, CLASSIFICATION_HEADER, CLASSIFICATION_LAST_ROW, opening, closing)
+    rejected(repository, "classification table semantics")
+
+
+def test_indented_fence_hides_classification_table(repository: Path):
+    fence_fragment(repository, CLASSIFICATION_HEADER, CLASSIFICATION_LAST_ROW, "   ```markdown", "   ```")
+    rejected(repository, "classification table semantics")
+
+
+def test_tildes_do_not_close_backtick_fence(repository: Path):
+    fence_fragment(repository, CLASSIFICATION_HEADER, CLASSIFICATION_LAST_ROW, "```markdown", "~~~")
+    rejected(repository, "unterminated fenced code block")
+
+
+def test_shorter_marker_does_not_close_long_fence(repository: Path):
+    fence_fragment(repository, CLASSIFICATION_HEADER, CLASSIFICATION_LAST_ROW, "````markdown", "```")
+    rejected(repository, "unterminated fenced code block")
+
+
+def test_unterminated_fence_is_rejected(repository: Path):
+    path = repository / FILES[0]
+    path.write_text(path.read_text(encoding="utf-8") + "\n```markdown\nexample\n", encoding="utf-8")
+    rejected(repository, "unterminated fenced code block")
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "El proyecto está production-ready.",
+        "La región eu-west-1 queda aprobada.",
+        "Se concede bedrock:InvokeModel.",
+        "Los datos internos están permitidos.",
+        "Esta PR autoriza ejecutar la inferencia.",
+    ],
+)
+def test_contradiction_inside_fence_is_ignored(repository: Path, claim: str):
+    path = repository / FILES[0]
+    content = path.read_text(encoding="utf-8")
+    assert "## Retención" in content
+    path.write_text(content.replace("## Retención", f"```text\n{claim}\n```\n\n## Retención", 1), encoding="utf-8")
+    run_guardrail(repository)
+
+
+@pytest.mark.parametrize(
+    "claim,control",
+    [
+        ("El proyecto está production-ready.", "production readiness contradiction"),
+        ("La región eu-west-1 queda aprobada.", "region approval contradiction"),
+        ("Se concede bedrock:InvokeModel.", "Bedrock IAM contradiction"),
+        ("Los datos internos están permitidos.", "NO-GO contradiction"),
+        ("Esta PR autoriza ejecutar la inferencia.", "NO-GO contradiction"),
+    ],
+)
+def test_contradiction_after_fence_is_normative(repository: Path, claim: str, control: str):
+    path = repository / FILES[0]
+    content = path.read_text(encoding="utf-8")
+    assert "## Retención" in content
+    example = "```text\nnon-normative example\n```"
+    path.write_text(content.replace("## Retención", f"{example}\n{claim}\n\n## Retención", 1), encoding="utf-8")
+    rejected(repository, control)
+
+
+def test_normative_table_plus_fenced_example_is_valid(repository: Path):
+    path = repository / FILES[0]
+    content = path.read_text(encoding="utf-8")
+    assert "## Datos prohibidos" in content
+    example = f"```markdown\n{CLASSIFICATION_HEADER}\n|---|---|---|\n| Interna | Ejemplo | Sí |\n```\n\n"
+    path.write_text(content.replace("## Datos prohibidos", example + "## Datos prohibidos", 1), encoding="utf-8")
+    run_guardrail(repository)
+
+
+def test_inline_code_is_preserved():
+    text = "Use `source` and `bedrock:InvokeModel` no se concede.\n"
+    assert strip_fenced_code_blocks(text) == text
+
+
+def test_four_space_indented_block_is_not_a_fence():
+    text = "    ```markdown\n    example\n    ```\n"
+    assert strip_fenced_code_blocks(text) == text
+
+
+def test_internal_short_marker_does_not_close_long_fence():
+    text = "````markdown\n```\ninside\n````\nafter\n"
+    assert strip_fenced_code_blocks(text) == "\n\n\n\nafter\n"
+
+
+def test_content_after_closed_fence_is_preserved():
+    text = "~~~text\nignored\n~~~\n## Normative\ncontent\n"
+    assert strip_fenced_code_blocks(text) == "\n\n\n## Normative\ncontent\n"
