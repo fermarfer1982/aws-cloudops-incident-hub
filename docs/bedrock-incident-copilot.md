@@ -49,7 +49,7 @@ para producción.
 - Selección y aprobación de modelo, acceso al modelo e inferencias reales.
 - Evaluación semántica y groundedness con evaluadores reales.
 - Coste, latencia y métricas de tokens reales de Amazon Bedrock.
-- Decisiones WA-021 sobre clasificación, privacidad y retención.
+- Implementación técnica de los controles aprobados por WA-021 para datos sintéticos.
 - Cambio de ADR-013 de **Proposed** a **Accepted** tras evidencia real.
 - Production readiness.
 
@@ -284,7 +284,9 @@ El validador futuro deberá:
 
 ## 16. Privacidad
 
-Antes de implementar, WA-021 deberá informar decisiones aún no aprobadas:
+WA-021 aprueba únicamente la política para una futura fixture sintética de
+laboratorio. La región, los modelos y cualquier tratamiento de datos reales siguen
+sin aprobarse:
 
 - atributos permitidos, clasificación y finalidad;
 - presencia de PII, secretos o tokens;
@@ -294,6 +296,21 @@ Antes de implementar, WA-021 deberá informar decisiones aún no aprobadas:
 
 La minimización de datos precede a la inferencia. No se habilitará caching hasta
 evaluar privacidad, invalidación y coste.
+
+## Gobierno de datos aprobado para el laboratorio
+
+La [política de gobierno de datos GenAI](genai-data-governance.md) cierra WA-021
+solo para preparar una futura prueba con una fixture completamente sintética. La
+allowlist enviada al modelo queda limitada exactamente a `source`, `site`,
+`message` y `value`; cualquier campo adicional, clasificación desconocida, posible
+PII o secreto obliga a rechazar antes de inferir.
+
+Prompt, contexto, respuesta bruta y texto generado tienen retención cero fuera de
+la memoria necesaria para validación y revisión autorizada. Solo puede persistir
+evidencia técnica saneada. Esta política no habilita Amazon Bedrock ni autoriza una
+inferencia. Región, modelo, acceso, IAM, coste, workflow de una invocación y el
+mecanismo seguro de revisión humana continúan pendientes. ADR-013 permanece
+**Proposed** y el proyecto **not production-ready**.
 
 ## 17. IAM
 
@@ -398,8 +415,8 @@ secretos falsos. No incluirá datos reales o sensibles.
 
 ## 24. Roadmap
 
-1. Aprobar privacidad, datos, región, allowlist y criterios de calidad.
-2. Implementar MVP tras aceptar el plan, manteniendo feature off.
+1. Gobierno de datos y WA-021 completados solo para laboratorio sintético.
+2. Aprobar región, modelo, acceso, IAM, coste y criterios de calidad.
 3. Ejecutar tests locales deterministas y evaluación sintética.
 4. Evaluar Guardrails, modelos, coste y latencia.
 5. Realizar prueba AWS efímera solo con aprobación y workflow controlado.
