@@ -7,13 +7,14 @@ Hub para transformar el contexto acotado de un incidente en un análisis
 estructurado, trazable y de solo lectura mediante Amazon Bedrock. Existe un núcleo
 local, un adaptador de aplicación testeable para Converse API y un shell de
 infraestructura cerrado expresado en CDK, pero no existe un modelo aprobado, acceso
-al modelo, despliegue ni evidencia de inferencia real.
+al modelo ni evidencia de inferencia real. El shell cerrado y efímero sí fue
+desplegado y validado en AWS.
 La referencia continúa validada únicamente como laboratorio y no está preparada
 para producción.
 
 ## Implementation status
 
-### Implementado en esta PR
+### Implementado
 
 - Modelos estrictos de entrada, payload interno y respuesta.
 - Prompt builder versionado y separado del contexto no confiable.
@@ -32,31 +33,34 @@ para producción.
 - Lambda GenAI dedicada e integración independiente con la HTTP API.
 - Scope Cognito dedicado `cloudops-incident-hub/incidents.summarize`.
 - Rol IAM independiente limitado a `dynamodb:GetItem` sobre la tabla de incidentes.
-- Concurrencia reservada igual a uno, log group separado y alarmas Lambda nativas.
+- Uso del pool de concurrencia no reservada, log group separado y alarmas Lambda
+  nativas.
 - Configuración cerrada con `AI_SUMMARY_ENABLED=false` y
   `AI_SUMMARY_PROVIDER=disabled`, sin permisos Bedrock.
+- Workflow AWS manual y controlado para el shell cerrado.
+- Despliegue AWS efímero, IAM, autenticación y estado desactivado validados.
+- Destroy, cleanup y evidencia saneada verificados.
 
 ### Pendiente
 
 - Región Bedrock aprobada, modelo o inference profile permitido y acceso al modelo.
 - `bedrock:InvokeModel` de mínimo privilegio e inferencia real.
 - Métricas custom de CloudWatch y Amazon Bedrock Guardrails.
-- Workflow AWS manual y controlado.
 - Selección y aprobación de modelo, acceso al modelo e inferencias reales.
 - Evaluación semántica y groundedness con evaluadores reales.
-- Coste y latencia reales y evidencia de laboratorio AWS.
+- Coste, latencia y métricas de tokens reales de Amazon Bedrock.
 - Decisiones WA-021 sobre clasificación, privacidad y retención.
 - Cambio de ADR-013 de **Proposed** a **Accepted** tras evidencia real.
-- Despliegue y evidencia de validación AWS.
+- Production readiness.
 
-Este estado no completa ninguna fase AWS del diseño histórico. El modo fake es
-solo para laboratorio local con datos sintéticos y no representa inferencia real.
+Este estado completa únicamente la validación AWS del shell cerrado. El modo fake
+usa datos sintéticos y no representa inferencia real.
 El arnés local evalúa un contrato determinista; no valida la calidad de un LLM ni
 reemplaza evaluación humana, Bedrock Evaluations o pruebas con modelos reales.
-Esta infraestructura es un shell cerrado y validado mediante synth/tests locales;
-no constituye una integración Amazon Bedrock validada. Las métricas de tokens,
-latencia de proveedor, coste, grounding, validación y errores del provider requieren
-cambios posteriores de aplicación.
+Esta infraestructura es un shell cerrado validado mediante synth, tests locales y
+un despliegue AWS efímero; no constituye una integración Amazon Bedrock validada.
+Las métricas de tokens, latencia de proveedor, coste, grounding, validación y
+errores del provider requieren cambios posteriores de aplicación.
 
 ## 2. Problema que resuelve
 
@@ -482,8 +486,20 @@ funcionales no se ejecutaron y no se generó la evidencia saneada final.
 El rollback y el destroy se completaron, y se verificó la ausencia final del stack,
 la Lambda GenAI y su Log Group. Bedrock no fue invocado. El resultado fue un fallo
 seguro, no una validación AWS exitosa. La corrección elimina la concurrencia
-reservada; un nuevo intento queda pendiente de revisión, merge y autorización
-explícita.
+reservada.
+
+## Validación AWS satisfactoria del shell cerrado — 17 de julio de 2026
+
+Tras corregir la reserva incompatible del primer intento, el segundo intento
+finalizó satisfactoriamente. OIDC, identidad, synth, deploy, IAM y recursos fueron
+aprobados. La ruta autenticada confirmó el estado cerrado con HTTP 503; la petición
+anónima obtuvo HTTP 401 y el token con scope incorrecto HTTP 403.
+
+El destroy y la verificación de ausencia del stack, la Lambda GenAI y su Log Group
+también finalizaron correctamente, y se generó evidencia saneada. No se configuró
+ni invocó Amazon Bedrock: el alcance validado se limita al shell cerrado y efímero.
+Véanse el [informe de validación](genai-shell-aws-validation-2026-07-17.md) y la
+[evidencia JSON](evidence/genai-shell-aws-validation-2026-07-17.json).
 
 La validación demuestra únicamente que el shell se despliega, autoriza, permanece
 desactivado y se destruye; no constituye una integración Amazon Bedrock validada.

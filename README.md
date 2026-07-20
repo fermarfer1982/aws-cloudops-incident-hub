@@ -305,8 +305,8 @@ Guía: [prueba AWS efímera y controlada](docs/aws-performance-test.md).
 
 AWS CloudOps Incident Copilot dispone de un núcleo local de MVP, estrictamente de
 solo lectura. Incluye un adaptador testeable para Amazon Bedrock Converse API, pero
-no hay modelo aprobado, acceso concedido, despliegue ni evidencia de inferencia
-real. La infraestructura expresada en CDK incorpora un shell cerrado: una Lambda
+no hay modelo aprobado, acceso concedido ni evidencia de inferencia real. La
+infraestructura expresada en CDK incorpora un shell cerrado: una Lambda
 GenAI dedicada, la ruta `POST /incidents/{incident_id}/ai-summary` protegida por el
 scope `cloudops-incident-hub/incidents.summarize` y un rol limitado a
 `dynamodb:GetItem`. El shell no reserva capacidad Lambda y utiliza el pool de
@@ -321,8 +321,12 @@ el proyecto continúa **not production-ready**.
 El primer intento AWS controlado falló de forma segura porque una reserva fija era
 incompatible con la capacidad regional disponible de la cuenta. El rollback, la
 destrucción y el cleanup se completaron y se verificó la ausencia final de los
-recursos GenAI. Las validaciones funcionales no llegaron a ejecutarse, por lo que
-todavía no existe evidencia AWS funcional exitosa del shell.
+recursos GenAI. Tras retirar esa reserva, el shell cerrado fue validado en AWS el
+17 de julio de 2026: despliegue, autorización, comportamiento cerrado, destroy y
+cleanup finalizaron correctamente. La
+[evidencia saneada](docs/genai-shell-aws-validation-2026-07-17.md) está versionada.
+No hubo inferencia Bedrock ni existe un modelo aprobado o configurado; ADR-013
+continúa **Proposed** y el proyecto **not production-ready**.
 
 El repositorio incluye además un arnés local y determinista de evaluación con
 casos y predicciones completamente sintéticos. Valida el esquema, el grounding por
@@ -333,9 +337,8 @@ las evaluaciones con modelos reales ni constituye evidencia AWS.
 
 El modo local actual no usa Cognito y solo debe ejecutarse en una red de laboratorio
 confiable y con datos sintéticos. La ruta y el scope dedicados existen únicamente en
-IaC y han sido diseñados para fallar de forma cerrada; no se han desplegado ni
-validado en AWS y no demuestran una inferencia real ni una integración Amazon
-Bedrock validada.
+IaC y han sido validados en AWS como shell cerrado y efímero. Esta validación no
+demuestra una inferencia real ni una integración Amazon Bedrock validada.
 
 Ejemplo local con el stack de laboratorio:
 
