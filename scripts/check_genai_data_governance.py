@@ -5,26 +5,37 @@ import argparse
 import re
 from pathlib import Path
 
-ALLOWED_ATTRIBUTES = {"source", "site", "message", "value"}
 REQUIRED_HEADINGS = (
-    "# Gobierno de datos para GenAI",
-    "## Estado y autoridad",
-    "## Alcance autorizado",
-    "## Finalidad",
-    "## Clasificación",
-    "## Allowlist exacta de atributos",
-    "## Datos prohibidos",
-    "## PII y secretos",
-    "## Minimización",
-    "## Región y transferencia",
-    "## Retención",
-    "## Borrado y cleanup",
-    "## Logging y telemetría",
-    "## Acceso humano y responsabilidad",
-    "## Auditoría",
-    "## Incidentes de datos",
-    "## Revisión de la política",
-    "## Cierre de WA-021",
+    "Estado y autoridad",
+    "Alcance autorizado",
+    "Finalidad",
+    "Clasificación",
+    "Allowlist exacta de atributos",
+    "Datos prohibidos",
+    "PII y secretos",
+    "Minimización",
+    "Región y transferencia",
+    "Retención",
+    "Borrado y cleanup",
+    "Logging y telemetría",
+    "Acceso humano y responsabilidad",
+    "Auditoría",
+    "Incidentes de datos",
+    "Revisión de la política",
+    "Cierre de WA-021",
+)
+ALLOWED_ATTRIBUTES = {"source", "site", "message", "value"}
+CLASSIFICATION = {
+    "Pública": "No necesaria",
+    "Interna": "No",
+    "Confidencial": "No",
+    "Restringida": "No",
+    "Sintética de laboratorio": "Sí",
+}
+REGION_PATTERN = re.compile(
+    r"\b(?:af|ap|ca|eu|il|me|mx|sa|us)-"
+    r"(?:central|east|north|northeast|northwest|south|southeast|southwest|west)-\d\b",
+    re.IGNORECASE,
 )
 
 
@@ -41,10 +52,314 @@ def _read(path: Path, control: str) -> str:
         raise SystemExit(f"GenAI data governance control failed: {control}") from None
 
 
-def _section(document: str, heading: str) -> str:
-    require(heading in document, f"missing heading {heading}")
-    tail = document.split(heading, 1)[1]
-    return tail.split("\n## ", 1)[0]
+def parse_sections(document: str) -> dict[str, str]:
+    lines = document.splitlines()
+    require(lines and lines[0].strip() == "# Gobierno de datos para GenAI", "policy title")
+    sections: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in lines[1:]:
+        match = re.fullmatch(r"##\s+(.+?)\s*", line)
+        if match:
+            heading = match.group(1)
+            require(heading not in sections, f"duplicate heading {heading}")
+            sections[heading] = []
+            current = heading
+            continue
+        if current is not None:
+            sections[current].append(line)
+    for heading in REQUIRED_HEADINGS:
+        require(heading in sections, f"missing heading ## {heading}")
+        require(any(line.strip() for line in sections[heading]), f"empty section {heading}")
+    return {heading: "\n".join(lines).strip() for heading, lines in sections.items()}
+
+
+def _cells(line: str) -> list[str] | None:
+    stripped = line.strip()
+    if not stripped.startswith("|") or not stripped.endswith("|"):
+        return None
+    return [cell.strip() for cell in stripped[1:-1].split("|")]
+
+
+def parse_table(section: str, headers: tuple[str, ...], control: str) -> list[dict[str, str]]:
+    lines = section.splitlines()
+    starts = [index for index, line in enumerate(lines) if _cells(line) == list(headers)]
+    require(len(starts) == 1, control)
+    start = starts[0]
+    require(start + 1 < len(lines), control)
+    separator = _cells(lines[start + 1])
+    require(
+        separator is not None
+        and len(separator) == len(headers)
+        and all(re.fullmatch(r":?-{3,}:?", cell) for cell in separator),
+        control,
+    )
+    rows: list[dict[str, str]] = []
+    seen: set[tuple[str, ...]] = set()
+    for line in lines[start + 2 :]:
+        cells = _cells(line)
+        if cells is None:
+            if rows:
+                break
+            continue
+        require(len(cells) == len(headers), control)
+        row = tuple(cells)
+        require(row not in seen, control)
+        seen.add(row)
+        rows.append(dict(zip(headers, cells, strict=True)))
+    require(rows, control)
+    table_lines = sum(1 for line in lines if _cells(line) == list(headers))
+    require(table_lines == 1, control)
+    return rows
+
+
+def _contains_all(text: str, phrases: tuple[str, ...], control: str) -> None:
+    lowered = re.sub(r"\s+", " ", text.lower())
+    require(all(phrase.lower() in lowered for phrase in phrases), control)
+
+
+def validate_classification(section: str) -> None:
+    rows = parse_table(
+        section,
+        ("Clase", "Definición", "Permitida en primera prueba"),
+        "classification table semantics",
+    )
+    require(len(rows) == 5, "classification table semantics")
+    actual: dict[str, str] = {}
+    for row in rows:
+        name = row["Clase"]
+        require(name not in actual and row["Definición"], "classification table semantics")
+        actual[name] = row["Permitida en primera prueba"]
+    require(actual == CLASSIFICATION, "classification table semantics")
+    require(
+        "La única clasificación admitida es **Sintética de laboratorio**" in section,
+        "classification table semantics",
+    )
+
+
+def validate_allowlist(section: str) -> None:
+    rows = parse_table(
+        section,
+        ("Atributo", "Tipo permitido", "Restricción"),
+        "allowlist table structure",
+    )
+    require(len(rows) == 4, "allowlist cardinality")
+    by_name: dict[str, dict[str, str]] = {}
+    for row in rows:
+        match = re.fullmatch(r"`([^`]+)`", row["Atributo"])
+        require(match is not None, "exact attribute allowlist")
+        name = match.group(1)
+        require(name not in by_name, "exact attribute allowlist")
+        by_name[name] = row
+    require(set(by_name) == ALLOWED_ATTRIBUTES, "exact attribute allowlist")
+    expected_types = {
+        "source": "string",
+        "site": "string",
+        "message": "string",
+        "value": "number o null",
+    }
+    require(
+        all(by_name[name]["Tipo permitido"] == expected for name, expected in expected_types.items()),
+        "allowlist type semantics",
+    )
+    restrictions = {
+        "source": ("valor sintético fijo", "allowlist versionada"),
+        "site": ("etiqueta sintética", "nunca una sede real"),
+        "message": ("texto fijo de la fixture sintética", "sin entrada libre"),
+        "value": ("valor sintético acotado", "nunca texto"),
+    }
+    for name, phrases in restrictions.items():
+        _contains_all(by_name[name]["Restricción"], phrases, "allowlist restriction semantics")
+    _contains_all(
+        section,
+        (
+            "Ningún atributo adicional puede enviarse",
+            "clasificación desconocida implica rechazo",
+            "incident_id",
+            "no debe enviarse al modelo ni incluirse en la evidencia",
+            "Cambiar esta allowlist requiere una nueva PR de gobierno",
+        ),
+        "allowlist normative semantics",
+    )
+
+
+def validate_retention(section: str) -> None:
+    rows = parse_table(
+        section,
+        ("Elemento", "Persistencia permitida", "Retención"),
+        "retention table semantics",
+    )
+    by_element = {row["Elemento"]: row for row in rows}
+    require(len(by_element) == len(rows) == 9, "retention table semantics")
+    expected = {
+        "Prompt y contexto construidos": ("No", "Memoria durante la invocación"),
+        "Respuesta bruta": ("No", "Memoria hasta validación y revisión autorizada"),
+        "Texto generado": ("No", "No logs, no artifacts, no Git"),
+        "Temporales de GitHub Actions": ("Solo durante el job", "Eliminación bajo `always()`"),
+        "Artifact técnico": ("Solo evidencia saneada", "Máximo 7 días"),
+        "Archivos en `mirofish`": ("No", "Deben quedar ausentes"),
+    }
+    for element, values in expected.items():
+        require(element in by_element, "retention table semantics")
+        require(
+            (by_element[element]["Persistencia permitida"], by_element[element]["Retención"])
+            == values,
+            "retention table semantics",
+        )
+
+
+def validate_incident_response(section: str) -> None:
+    items: list[tuple[int, str]] = []
+    current: tuple[int, list[str]] | None = None
+    for line in section.splitlines():
+        match = re.match(r"^(\d+)\.\s+(.+)$", line.strip())
+        if match:
+            if current:
+                items.append((current[0], " ".join(current[1])))
+            current = (int(match.group(1)), [match.group(2)])
+        elif current and line.strip():
+            current[1].append(line.strip())
+    if current:
+        items.append((current[0], " ".join(current[1])))
+    require([number for number, _ in items] == list(range(1, 9)), "incident response semantics")
+    required = (
+        ("bloquear la inferencia", "detener el workflow"),
+        ("evitar imprimir el contenido",),
+        ("eliminar temporales",),
+        ("ejecutar destroy",),
+        ("verificar ausencia",),
+        ("únicamente un estado saneado",),
+        ("no reintentar",),
+        ("revisión de seguridad", "antes de otra ejecución"),
+    )
+    for (_, item), phrases in zip(items, required, strict=True):
+        _contains_all(item, phrases, "incident response semantics")
+
+
+def validate_material_sections(sections: dict[str, str]) -> None:
+    requirements = {
+        "Estado y autoridad": (
+            "al fusionarse esta política",
+            "una sola persona",
+            "no constituye aprobación jurídica",
+            "aprobación organizativa independiente",
+        ),
+        "Alcance autorizado": (
+            "un solo incidente",
+            "completamente sintético",
+            "fixture versionada",
+            "una sola invocación",
+            "no autorizan ejecutar la inferencia",
+        ),
+        "Finalidad": (
+            "resumen consultivo",
+            "decisiones automáticas",
+            "entrenamiento",
+            "rag",
+            "caching",
+        ),
+        "Datos prohibidos": (
+            "datos empresariales",
+            "datos personales",
+            "credenciales",
+            "clasificación desconocida",
+        ),
+        "PII y secretos": (
+            "redacción actual no constituye detección suficiente de pii",
+            "falla de forma cerrada",
+            "el valor detectado nunca se registra",
+        ),
+        "Minimización": (
+            "source`, `site`, `message` y `value",
+            "no se envía el objeto completo de dynamodb",
+            "no existe fallback",
+        ),
+        "Región y transferencia": (
+            "no aprueba todavía ninguna región ni modelo",
+            "cross-region inference queda prohibida",
+            "verificará oficialmente",
+        ),
+        "Borrado y cleanup": (
+            "tanto en éxito como en fallo",
+            "ejecutará de forma incondicional",
+            "ausencia del stack, la lambda y el log group",
+        ),
+        "Logging y telemetría": (
+            "solo se permiten versión de prompt",
+            "se prohíben prompt",
+            "respuesta bruta",
+            "datos personales o empresariales",
+        ),
+        "Acceso humano y responsabilidad": (
+            "evaluar todas las afirmaciones",
+            "la salida es consultiva",
+            "deberá definirse antes de la prueba",
+        ),
+        "Cierre de WA-021": (
+            "al fusionarse esta política",
+            "caso sintético de laboratorio",
+            "no autoriza inferencia ni datos reales",
+            "no aprueba región o modelo",
+            "not production-ready",
+        ),
+    }
+    for heading, phrases in requirements.items():
+        _contains_all(sections[heading], phrases, f"section semantics {heading}")
+
+
+def validate_contradictions(policy: str) -> None:
+    compact = re.sub(r"\s+", " ", policy)
+    lower = compact.lower()
+    require(REGION_PATTERN.search(policy) is None, "region approval contradiction")
+    for pattern in (
+        r"(?:el\s+)?modelo\s+[^.]{0,80}(?:queda|está|es)\s+aprobado",
+        r"se\s+aprueba\s+(?:el\s+)?modelo",
+        r"inference\s+profile\s+[^.]{0,80}aprobado",
+        r"modelo\s+seleccionado\s*:",
+    ):
+        require(re.search(pattern, lower) is None, "model approval contradiction")
+    for match in re.finditer(r"bedrock:invokemodel", lower):
+        context = lower[max(0, match.start() - 100) : match.end() + 100]
+        require(
+            any(negative in context for negative in ("no se concede", "no concede", "prohibid", "fuera de alcance")),
+            "Bedrock IAM contradiction",
+        )
+    for match in re.finditer(r"production-ready", lower):
+        prefix = lower[max(0, match.start() - 30) : match.start()]
+        require("not " in prefix or "no está " in prefix, "production readiness contradiction")
+    forbidden = (
+        r"datos\s+(?:internos|reales|empresariales)\s+(?:están\s+)?permitidos",
+        r"se\s+autorizan\s+datos\s+(?:internos|reales|empresariales)",
+        r"clase\s+interna\s+(?:está\s+)?permitida",
+        r"(?<!no\s)autoriza\s+(?:la\s+)?inferencia",
+        r"reintentar\s+automáticamente",
+        r"(?:prompt|contexto|respuesta\s+bruta|texto\s+generado)[^.]{0,80}(?:se\s+persiste|puede\s+persistir|persistencia\s+permitida\s*:\s*sí)",
+    )
+    require(not any(re.search(pattern, lower) for pattern in forbidden), "NO-GO contradiction")
+
+
+def validate_repository_status(readme: str, backlog: str, review: str, release: str) -> None:
+    expected = (
+        "WA-021: clasificación y retención completadas para el laboratorio sintético; "
+        "datos reales, privacidad organizativa y producción permanecen pendientes."
+    )
+    require(expected in readme, "WA-021 repository status consistency")
+    require(
+        "Completado para el alcance sintético de laboratorio" in backlog
+        and "Datos reales, región, modelo, IAM Bedrock e inferencia continúan prohibidos" in backlog,
+        "WA-021 repository status consistency",
+    )
+    require(
+        "WA-021 is closed only as a policy for a future single-inference test with synthetic laboratory data"
+        in review,
+        "WA-021 repository status consistency",
+    )
+    require(
+        "WA-021: clasificación y retención cerradas para el laboratorio sintético; "
+        "datos reales, requisitos organizativos de privacidad y uso en producción "
+        "permanecen pendientes."
+        in release,
+        "WA-021 repository status consistency",
+    )
 
 
 def run_guardrail(root: Path) -> None:
@@ -52,72 +367,26 @@ def run_guardrail(root: Path) -> None:
     backlog = _read(root / "docs/well-architected-backlog.md", "missing backlog")
     review = _read(root / "docs/well-architected-review.md", "missing review")
     design = _read(root / "docs/bedrock-incident-copilot.md", "missing design")
-    adr = _read(
-        root / "docs/adr/013-amazon-bedrock-incident-copilot.md",
-        "missing ADR-013",
+    adr = _read(root / "docs/adr/013-amazon-bedrock-incident-copilot.md", "missing ADR-013")
+    readme = _read(root / "README.md", "missing README")
+    release = _read(
+        root / "docs/v1.0.0-lab-release-and-rollback.md",
+        "missing release runbook",
     )
-
-    for heading in REQUIRED_HEADINGS:
-        require(heading in policy, f"missing heading {heading}")
-
-    require(
-        "Aprobado para el alcance sintético de laboratorio al fusionarse esta política"
-        in policy,
-        "approval scope",
-    )
-    allowlist = _section(policy, "## Allowlist exacta de atributos")
-    attributes = re.findall(r"^\| `([^`]+)` \|", allowlist, flags=re.MULTILINE)
-    require(len(attributes) == 4, "allowlist cardinality")
-    require(set(attributes) == ALLOWED_ATTRIBUTES, "exact attribute allowlist")
-    require(
-        "La única clasificación admitida es **Sintética de laboratorio**" in policy,
-        "synthetic-only classification",
-    )
-    require(
-        "Campo no allowlisted o clasificación desconocida implica rechazo antes de la"
-        in policy,
-        "unknown-field rejection",
-    )
-    require(
-        "no se invoca el modelo, la ejecución falla\nde forma cerrada" in policy,
-        "PII and secret fail-closed",
-    )
-    retention = _section(policy, "## Retención")
-    for row in (
-        "| Prompt y contexto construidos | No |",
-        "| Respuesta bruta | No |",
-        "| Texto generado | No |",
-        "| Artifact técnico | Solo evidencia saneada | Máximo 7 días |",
-    ):
-        require(row in retention, f"retention rule {row}")
-    require("tanto en éxito como en\nfallo" in policy, "cleanup on success and failure")
-    require(
-        "Revisor humano autorizado | Evaluar todas las afirmaciones" in policy,
-        "mandatory human review",
-    )
-    require("no autorizan ejecutar la inferencia" in policy, "no inference authorization")
-    require("datos empresariales o incidentes reales" in policy, "real data prohibited")
-    require(
-        "Esta política no aprueba todavía ninguna región ni modelo" in policy,
-        "region and model not approved",
-    )
-    require("`bedrock:InvokeModel` no se\nconcede" in policy, "Bedrock IAM not granted")
+    sections = parse_sections(policy)
+    validate_material_sections(sections)
+    validate_classification(sections["Clasificación"])
+    validate_allowlist(sections["Allowlist exacta de atributos"])
+    validate_retention(sections["Retención"])
+    validate_incident_response(sections["Incidentes de datos"])
+    validate_contradictions(policy)
     require("- **Estado:** Proposed" in adr, "ADR-013 remains Proposed")
-    require(
-        "Completado para el alcance sintético de laboratorio" in backlog
-        and "Datos reales, región, modelo, IAM Bedrock e inferencia continúan prohibidos"
-        in backlog,
-        "WA-021 synthetic-only completion",
-    )
     link = "[política de gobierno de datos GenAI](genai-data-governance.md)"
     require(link in review, "review policy link")
     require(link in design, "design policy link")
-    require(
-        "**Production readiness:** Not production-ready" in review,
-        "project not production-ready",
-    )
-    require("not production-ready" in review.lower(), "project not production-ready")
+    require("**Production readiness:** Not production-ready" in review, "project not production-ready")
     require("not production-ready" in design.lower(), "design not production-ready")
+    validate_repository_status(readme, backlog, review, release)
 
 
 def _parser() -> argparse.ArgumentParser:
