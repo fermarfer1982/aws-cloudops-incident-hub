@@ -1,0 +1,32 @@
+{
+  "authenticated_request": {
+    "passed": true,
+    "status": 503
+  },
+  "bedrock_permissions_present": false,
+  "commit_sha": "661f44e3c6dccbcfb819376404a533a5909a7970",
+  "destroy_status": "success",
+  "feature_provider_state": {
+    "enabled": false,
+    "provider": "disabled"
+  },
+  "iam_actions": [
+    "dynamodb:GetItem",
+    "logs:CreateLogStream",
+    "logs:PutLogEvents"
+  ],
+  "region": "eu-west-1",
+  "resource_cleanup_status": "verified",
+  "route_tested": "POST /incidents/{incident_id}/ai-summary",
+  "stack_name": "CloudOpsIncidentHubStack",
+  "timestamp": "2026-07-17T13:45:57Z",
+  "unauthenticated_request": {
+    "passed": true,
+    "status": 401
+  },
+  "workflow_run_id": "29584706366",
+  "wrong_scope_request": {
+    "passed": true,
+    "status": 403
+  }
+}

@@ -391,6 +391,21 @@ def test_evidence_has_only_allowed_fields_and_sorted_actions():
         assert forbidden not in rendered
 
 
+def test_versioned_aws_validation_evidence_is_sanitized_and_successful():
+    path = ROOT / "docs" / "evidence" / "genai-shell-aws-validation-2026-07-17.json"
+    result = json.loads(path.read_text(encoding="utf-8"))
+
+    validate_evidence(result)
+    assert result["commit_sha"] == "661f44e3c6dccbcfb819376404a533a5909a7970"
+    assert result["bedrock_permissions_present"] is False
+    assert result["destroy_status"] == "success"
+    assert result["resource_cleanup_status"] == "verified"
+    assert result["feature_provider_state"] == {
+        "enabled": False,
+        "provider": "disabled",
+    }
+
+
 def test_evidence_rejects_extra_fields():
     result = evidence()
     result["incident_id"] = "synthetic"
