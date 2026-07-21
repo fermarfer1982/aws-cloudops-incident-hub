@@ -110,7 +110,7 @@ Assign organizational production owners, approve measurable SLOs, connect alarms
 
 ## Recommended actions
 
-Validate federation and client separation in the target environment, validate broader abuse controls, extend data governance beyond the synthetic laboratory scope, confirm repository security settings and triage, and bind a verified SBOM to the future release. Region, model, access, IAM, cost, a one-invocation workflow, secure human review and real inference remain blockers for Amazon Bedrock.
+Validate federation and client separation in the target environment, validate broader abuse controls, extend data governance beyond the synthetic laboratory scope, confirm repository security settings and triage, and bind a verified SBOM to the future release. Region, model and cost have a reversible disabled proposal with a local guardrail. Account access, current destinations and terms revalidation, IAM, a one-invocation workflow, secure human review and real inference remain blockers for Amazon Bedrock; the decision is still NO-GO.
 
 ## Pillar rating
 
