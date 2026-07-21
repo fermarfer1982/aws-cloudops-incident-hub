@@ -206,3 +206,159 @@ def test_root_is_isolated(repository: Path):
     )
     assert result.returncode == 0
     assert result.stdout == "Bedrock model selection controls passed.\n"
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("input_price_per_million_tokens", 999.0),
+        ("output_price_per_million_tokens", 999.0),
+        ("input_price_per_thousand_tokens", 999.0),
+        ("output_price_per_thousand_tokens", 999.0),
+        ("currency", "EUR"),
+        ("pricing_unit", "per token"),
+        ("max_input_tokens", 999),
+        ("max_output_tokens", 999),
+        ("estimated_call_cost", 0.000132),
+        ("hard_ceiling", 0.0001),
+        ("snapshot_only", False),
+        ("service_tier", "flex"),
+        ("pricing_verified_at", "tomorrow"),
+        ("pricing_source", "https://example.com/pricing"),
+    ],
+)
+def test_pricing_mutations_are_rejected(repository: Path, key: str, value: object):
+    data = config(repository)
+    assert data["pricing_snapshot"][key] != value
+    data["pricing_snapshot"][key] = value
+    write(repository, data)
+    rejected(repository, "exact pricing snapshot")
+
+
+def test_additional_pricing_key_is_rejected(repository: Path):
+    data = config(repository)
+    data["pricing_snapshot"]["approved"] = True
+    assert "approved" in data["pricing_snapshot"]
+    write(repository, data)
+    rejected(repository, "exact pricing snapshot")
+
+
+def test_missing_pricing_key_is_rejected(repository: Path):
+    data = config(repository)
+    del data["pricing_snapshot"]["currency"]
+    assert "currency" not in data["pricing_snapshot"]
+    write(repository, data)
+    rejected(repository, "exact pricing snapshot")
+
+
+@pytest.mark.parametrize(
+    ("section", "key", "value", "control"),
+    [
+        ("parameters", "automatic_retries", False, "exact inert parameters"),
+        ("parameters", "max_tokens", True, "exact inert parameters"),
+        ("parameters", "temperature", False, "exact inert parameters"),
+        ("parameters", "tools", 0, "exact inert parameters"),
+        ("pricing_snapshot", "max_input_tokens", False, "exact pricing snapshot"),
+        ("pricing_snapshot", "max_output_tokens", "300", "exact pricing snapshot"),
+        ("pricing_snapshot", "snapshot_only", 1, "exact pricing snapshot"),
+    ],
+)
+def test_strict_json_types_are_enforced(
+    repository: Path, section: str, key: str, value: object, control: str
+):
+    data = config(repository)
+    assert type(data[section][key]) is not type(value)
+    data[section][key] = value
+    write(repository, data)
+    rejected(repository, control)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://user:pass@docs.aws.amazon.com/path",
+        "https://user@docs.aws.amazon.com/path",
+        "https://docs.aws.amazon.com:443/path",
+        "https://docs.aws.amazon.com.evil.test/path",
+        "https://aws.example.com/path",
+        "http://docs.aws.amazon.com/path",
+        "https://amazonaws.example/path",
+        "https://docs.aws.amazon.com/path\nheader: value",
+    ],
+)
+def test_confusing_or_credentialed_sources_are_rejected(repository: Path, url: str):
+    data = config(repository)
+    data["sources"][0] = url
+    assert data["sources"][0] == url
+    write(repository, data)
+    rejected(repository, "official AWS sources")
+
+
+@pytest.mark.parametrize(
+    "assertion",
+    [
+        "El perfil global está permitido.",
+        "Se permite usar un perfil global.",
+        "Puede utilizarse global.amazon.nova-lite-v1:0.",
+        "La cuenta tiene garantizadas 400 solicitudes por minuto.",
+        "La cuota de la cuenta está verificada.",
+        "La capacidad disponible está garantizada.",
+        "Todos los datos permanecen en Irlanda.",
+        "Los datos nunca salen de eu-west-1.",
+        "El procesamiento ocurre exclusivamente en Irlanda.",
+        "La inferencia es estrictamente in-region.",
+        "La inferencia está autorizada.",
+        "IAM está autorizado.",
+        "El acceso de cuenta está verificado.",
+        "Producción está aprobada.",
+        "ADR-013 está Accepted.",
+        "El modelo está habilitado.",
+        "La ejecución está permitida.",
+        "Retry automático está habilitado.",
+        "Fallback está permitido.",
+    ],
+)
+def test_normative_contradictions_are_rejected(repository: Path, assertion: str):
+    path = repository / FILES[1]
+    path.write_text(
+        path.read_text(encoding="utf-8") + "\n" + assertion, encoding="utf-8"
+    )
+    assert assertion in path.read_text(encoding="utf-8")
+    rejected(repository, "documentation contradiction")
+
+
+def test_contradiction_inside_fenced_example_is_ignored(repository: Path):
+    path = repository / FILES[1]
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\n```text\nTodos los datos permanecen en Irlanda.\n```\n",
+        encoding="utf-8",
+    )
+    run_guardrail(repository)
+
+
+def test_unterminated_fence_is_rejected(repository: Path):
+    path = repository / FILES[1]
+    path.write_text(path.read_text(encoding="utf-8") + "\n```text\n", encoding="utf-8")
+    rejected(repository, "unterminated fenced code block")
+
+
+def test_official_source_query_and_fragment_are_allowed(repository: Path):
+    data = config(repository)
+    data["sources"][0] = "https://docs.aws.amazon.com/path?view=1#section"
+    write(repository, data)
+    run_guardrail(repository)
+
+
+def test_reordered_json_keys_are_allowed(repository: Path):
+    data = config(repository)
+    reordered = dict(reversed(list(data.items())))
+    assert list(reordered) != list(data)
+    write(repository, reordered)
+    run_guardrail(repository)
+
+
+def test_crlf_document_is_allowed(repository: Path):
+    path = repository / FILES[1]
+    path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+    run_guardrail(repository)

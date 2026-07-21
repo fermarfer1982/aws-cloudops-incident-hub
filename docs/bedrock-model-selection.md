@@ -44,10 +44,14 @@ la prueba y exige otra revisión de gobierno.
 
 ## Precio, presupuesto y cuotas
 
-Snapshot documental consultado el **2026-07-21 UTC**, Geo/in-region Standard, USD
-por millón de tokens: entrada **0,06 USD** y salida **0,24 USD**. Para una llamada:
+Snapshot exclusivamente documental consultado el **2026-07-21T11:29:41Z**,
+on-demand Standard aplicable en `eu-west-1`. El [AWS Price List público](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonBedrock/20260720215247/eu-west-1/index.json)
+publica entrada **0,000069 USD/1K tokens** (**0,069 USD/1M**) y salida
+**0,000276 USD/1K tokens** (**0,276 USD/1M**). Para una llamada:
 
-`(1.000 / 1.000.000 × 0,06) + (300 / 1.000.000 × 0,24) = 0,000132 USD`.
+`1.000 / 1.000.000 × 0,069 = 0,000069 USD` de entrada;
+`300 / 1.000.000 × 0,276 = 0,0000828 USD` de salida; total exacto
+**0,0001518 USD**.
 
 El hard ceiling documental es **0,0002 USD**. Solo se propone una llamada, sin
 reutilización automática ni retry tras respuesta válida; cualquier retry requiere
