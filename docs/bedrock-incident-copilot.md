@@ -10,7 +10,10 @@ infraestructura cerrado expresado en CDK, pero no existe un modelo aprobado, acc
 al modelo ni evidencia de inferencia real. El shell cerrado y efímero sí fue
 desplegado y validado en AWS.
 La referencia continúa validada únicamente como laboratorio y no está preparada
-para producción.
+para producción. La [selección reversible de modelo y región](bedrock-model-selection.md)
+propone, sin activar, Nova Lite mediante Converse y un perfil geográfico UE. Sigue
+siendo **NO-GO PARA INFERENCIA BEDROCK REAL**, sin IAM ni acceso de cuenta verificado,
+y no cambia el estado Proposed de ADR-013.
 
 ## Implementation status
 
@@ -43,7 +46,7 @@ para producción.
 
 ### Pendiente
 
-- Región Bedrock aprobada, modelo o inference profile permitido y acceso al modelo.
+- Aprobación final de la región, modelo o inference profile propuestos y acceso al modelo.
 - `bedrock:InvokeModel` de mínimo privilegio e inferencia real.
 - Métricas custom de CloudWatch y Amazon Bedrock Guardrails.
 - Selección y aprobación de modelo, acceso al modelo e inferencias reales.
