@@ -167,16 +167,13 @@ def strip_fenced_code_blocks(document: str) -> str:
 
 def validate_normative_document(document: str) -> None:
     normative = strip_fenced_code_blocks(document)
+    validate_profile_authorizations(normative)
     clauses = [
         re.sub(r"[`*_]", "", clause).strip().lower()
         for clause in re.split(r"(?:\r?\n|;|\.(?:\s+|$))", normative)
         if clause.strip()
     ]
     forbidden = (
-        r"\bel perfil global (?:está|esta) permitido\b",
-        r"\bse permite (?:usar|utilizar) un perfil global\b",
-        r"\bpuede utilizarse global\.",
-        r"\bse (?:permite|autoriza)[^.;]*(?:global\.|us\.|apac\.)",
         r"\bla cuenta tiene garantizadas? \d+ solicitudes",
         r"\bla cuota de la cuenta (?:está|esta) verificada\b",
         r"\bla capacidad disponible (?:está|esta) garantizada\b",
@@ -199,6 +196,49 @@ def validate_normative_document(document: str) -> None:
             not any(re.search(pattern, clause) for pattern in forbidden),
             "documentation contradiction",
         )
+
+
+def validate_profile_authorizations(document: str) -> None:
+    profile_patterns = {
+        "GLOBAL": r"\b(?:perfil(?:es)?\s+global(?:es)?|inferencia\s+global|"
+        r"ámbito\s+global|scope\s+global|global\.|global)\b",
+        "US": r"\b(?:perfil(?:es)?\s+us|perfil(?:es)?\s+estadounidense(?:s)?|"
+        r"estados\s+unidos|ámbito\s+us|scope\s+us|us\.|us)\b",
+        "APAC": r"\b(?:perfil(?:es)?\s+apac|perfil(?:es)?\s+asia[- ]pacífico|"
+        r"inferencia\s+en\s+apac|ámbito\s+apac|scope\s+apac|apac\.|apac)\b",
+    }
+    authorization = re.compile(
+        r"\b(?:está|esta|están|estan|queda|quedan)?\s*"
+        r"(?:permitid[oa]s?|autorizad[oa]s?|aprobad[oa]s?)\b|"
+        r"\bse\s+permite\b|\b(?:puede|podrá|podra)\s+"
+        r"(?:usarse|utilizarse)\b",
+        re.IGNORECASE,
+    )
+    negation = re.compile(
+        r"\bno\s+(?:está|esta|están|estan|se\s+permite|puede|podrá|podra)\b|"
+        r"\b(?:prohibid[oa]s?|bloquead[oa]s?)\b",
+        re.IGNORECASE,
+    )
+    separators = re.compile(
+        r"(?:;|\.(?:\s+|$)|\b(?:pero|sin\s+embargo|no\s+obstante|aunque)\b)",
+        re.IGNORECASE,
+    )
+    for line in document.splitlines():
+        inherited_profiles: set[str] = set()
+        for clause in separators.split(re.sub(r"[`*_]", "", line)):
+            profiles = {
+                name
+                for name, pattern in profile_patterns.items()
+                if re.search(pattern, clause, re.IGNORECASE)
+            }
+            if profiles:
+                inherited_profiles = profiles
+            applicable = profiles or inherited_profiles
+            if applicable and authorization.search(clause):
+                require(
+                    negation.search(clause) is not None,
+                    "non-EU profile authorization",
+                )
 
 
 def run_guardrail(root: Path) -> None:

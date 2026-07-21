@@ -324,7 +324,17 @@ def test_normative_contradictions_are_rejected(repository: Path, assertion: str)
         path.read_text(encoding="utf-8") + "\n" + assertion, encoding="utf-8"
     )
     assert assertion in path.read_text(encoding="utf-8")
-    rejected(repository, "documentation contradiction")
+    control = (
+        "non-EU profile authorization"
+        if assertion
+        in {
+            "El perfil global está permitido.",
+            "Se permite usar un perfil global.",
+            "Puede utilizarse global.amazon.nova-lite-v1:0.",
+        }
+        else "documentation contradiction"
+    )
+    rejected(repository, control)
 
 
 def test_contradiction_inside_fenced_example_is_ignored(repository: Path):
@@ -361,4 +371,116 @@ def test_reordered_json_keys_are_allowed(repository: Path):
 def test_crlf_document_is_allowed(repository: Path):
     path = repository / FILES[1]
     path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+    run_guardrail(repository)
+
+
+@pytest.mark.parametrize(
+    "assertion",
+    [
+        "El perfil US está permitido.",
+        "Se permite el perfil US.",
+        "Puede utilizarse un perfil US.",
+        "El perfil estadounidense está autorizado.",
+        "Se permite inferencia en Estados Unidos.",
+        "Puede usarse el ámbito US.",
+        "El scope US está aprobado.",
+        "El perfil APAC está permitido.",
+        "Se permite el perfil APAC.",
+        "Puede utilizarse un perfil APAC.",
+        "El perfil Asia-Pacífico está autorizado.",
+        "Se permite inferencia en APAC.",
+        "Puede usarse el ámbito APAC.",
+        "El scope APAC está aprobado.",
+        "El perfil global está permitido.",
+        "Se permite un perfil global.",
+        "Puede usarse inferencia global.",
+        "EL PERFIL us ESTÁ PERMITIDO.",
+        "El   perfil   APAC   está   permitido.",
+        "- Control previo\n- El perfil US está permitido.",
+    ],
+)
+def test_non_eu_profile_authorizations_are_rejected(repository: Path, assertion: str):
+    path = repository / FILES[1]
+    path.write_text(
+        path.read_text(encoding="utf-8") + "\n" + assertion,
+        encoding="utf-8",
+    )
+    assert assertion in path.read_text(encoding="utf-8")
+    rejected(repository, "non-EU profile authorization")
+
+
+@pytest.mark.parametrize(
+    "assertion",
+    [
+        "El perfil US no está permitido.",
+        "No se permite el perfil US.",
+        "Los perfiles US están prohibidos.",
+        "El perfil APAC no está autorizado.",
+        "No puede utilizarse un perfil APAC.",
+        "Los perfiles Global, US y APAC están prohibidos.",
+        "Solo se permite el perfil geográfico UE.",
+        "El scope permitido es EU.",
+    ],
+)
+def test_legitimate_profile_prohibitions_are_allowed(repository: Path, assertion: str):
+    path = repository / FILES[1]
+    path.write_text(
+        path.read_text(encoding="utf-8") + "\n" + assertion,
+        encoding="utf-8",
+    )
+    assert assertion in path.read_text(encoding="utf-8")
+    run_guardrail(repository)
+
+
+@pytest.mark.parametrize(
+    "assertion",
+    [
+        "El perfil US no está permitido; sin embargo, podrá utilizarse.",
+        "No se permite APAC, pero queda autorizado para contingencia.",
+        "| Control | Estado |\n| --- | --- |\n| Perfil APAC | autorizado |",
+    ],
+)
+def test_coordinated_and_structured_authorizations_are_rejected(
+    repository: Path, assertion: str
+):
+    path = repository / FILES[1]
+    path.write_text(
+        path.read_text(encoding="utf-8") + "\n" + assertion,
+        encoding="utf-8",
+    )
+    assert assertion in path.read_text(encoding="utf-8")
+    rejected(repository, "non-EU profile authorization")
+
+
+def test_crlf_non_eu_authorization_is_rejected(repository: Path):
+    path = repository / FILES[1]
+    assertion = b"El perfil US est\xc3\xa1 permitido.\r\n"
+    path.write_bytes(path.read_bytes() + b"\r\n" + assertion)
+    assert assertion in path.read_bytes()
+    rejected(repository, "non-EU profile authorization")
+
+
+def test_non_eu_authorization_inside_fence_is_allowed(repository: Path):
+    path = repository / FILES[1]
+    example = "```text\nEl perfil US está permitido.\n```"
+    path.write_text(
+        path.read_text(encoding="utf-8") + "\n" + example,
+        encoding="utf-8",
+    )
+    assert example in path.read_text(encoding="utf-8")
+    run_guardrail(repository)
+
+
+def test_prohibition_outside_and_authorization_inside_fence_are_allowed(
+    repository: Path,
+):
+    path = repository / FILES[1]
+    addition = (
+        "Los perfiles US están prohibidos.\n```text\nEl perfil US está permitido.\n```"
+    )
+    path.write_text(
+        path.read_text(encoding="utf-8") + "\n" + addition,
+        encoding="utf-8",
+    )
+    assert addition in path.read_text(encoding="utf-8")
     run_guardrail(repository)
