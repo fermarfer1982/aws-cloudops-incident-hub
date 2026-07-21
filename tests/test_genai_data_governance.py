@@ -562,3 +562,198 @@ def test_iam_validation_handles_crlf(repository: Path):
 def test_iam_validation_handles_multiple_spaces(repository: Path):
     replace_iam_assertion(repository, "No se concede `bedrock:InvokeModel`; se   autoriza   `bedrock:InvokeModel`")
     rejected(repository, "Bedrock IAM contradiction")
+
+
+@pytest.mark.parametrize(
+    "assertion",
+    [
+        "Ningún rol dispone de `bedrock:InvokeModel`",
+        "Ninguna Lambda recibirá `bedrock:InvokeModel`",
+        "Ningún principal tendrá `bedrock:InvokeModel`",
+        "Ninguna función puede obtener `bedrock:InvokeModel`",
+        "Ninguno de los roles dispone de `bedrock:InvokeModel`",
+        "Nadie puede conceder `bedrock:InvokeModel`",
+        "Ningún rol del laboratorio tendrá `bedrock:InvokeModel`",
+        "Ninguna identidad actualmente configurada dispone de `bedrock:InvokeModel`",
+        "Ningunos roles dispondrán de `bedrock:InvokeModel`",
+        "Ningunas funciones recibirán `bedrock:InvokeModel`",
+        "nInGúN RoL DiSpOnE dE `BEDROCK:INVOKEMODEL`",
+        "Ningún    rol    actualmente    configurado    dispone    de `bedrock:InvokeModel`",
+        "Ningún rol dispone de `bedrock:InvokeModel`\r\n",
+        "- Ningún rol dispone de `bedrock:InvokeModel`",
+        "| IAM | Ningún rol dispone de `bedrock:InvokeModel` |",
+        "Ningún `rol` dispone de `bedrock:InvokeModel`",
+        "Ningún rol dispone ni dispondrá de `bedrock:InvokeModel`",
+        "Ninguna Lambda tiene o tendrá `bedrock:InvokeModel`",
+        "Nadie puede conceder, habilitar o añadir `bedrock:InvokeModel`",
+        "Ningún rol dispone de `bedrock:InvokeModel` ni puede solicitarlo",
+    ],
+    ids=[
+        "ningun-rol",
+        "ninguna-lambda",
+        "ningun-principal",
+        "ninguna-funcion",
+        "ninguno-de-los-roles",
+        "nadie",
+        "sujeto-con-complemento",
+        "sujeto-con-modificadores",
+        "ningunos",
+        "ningunas",
+        "case-insensitive",
+        "multiple-spaces",
+        "crlf",
+        "markdown-list",
+        "markdown-table-row",
+        "inline-code",
+        "coordinated-ni",
+        "coordinated-o",
+        "coordinated-list",
+        "coordinated-pronoun",
+    ],
+)
+def test_negatively_quantified_iam_subject_is_valid(repository: Path, assertion: str):
+    replace_iam_assertion(repository, assertion)
+    run_guardrail(repository)
+
+
+@pytest.mark.parametrize(
+    "assertion",
+    [
+        "Ningún rol dispone de `bedrock:InvokeModel`, pero la Lambda lo recibirá",
+        "Ningún rol dispone de `bedrock:InvokeModel`; sin embargo, otro rol lo tendrá",
+        "Ninguna Lambda recibirá `bedrock:InvokeModel`; no obstante, el rol lo tendrá",
+        "Nadie concede `bedrock:InvokeModel`, aunque se añadirá a la política",
+        "Ningún rol dispone de `bedrock:InvokeModel`; en cambio, otro rol lo tendrá",
+        "Ningún principal tiene `bedrock:InvokeModel`; posteriormente se habilitará",
+        "Ningún rol dispone de `bedrock:InvokeModel`, después se concederá",
+        "Ningún rol dispone de `bedrock:InvokeModel`. Otro rol lo tendrá",
+        "Ningún rol dispone de `bedrock:InvokeModel`\nEl rol lo tendrá",
+        "- Ningún rol dispone de `bedrock:InvokeModel`\n- El rol lo tendrá",
+        "| Ningún rol dispone de `bedrock:InvokeModel` |\n| El rol lo tendrá |",
+        "Ningún rol dispone de `bedrock:InvokeModel`; otro rol lo tendrá",
+        "Ningún rol dispone de `bedrock:InvokeModel`; el rol de ejecución sí dispone",
+        "Ningún rol dispone de `bedrock:InvokeModel`; se concede el permiso",
+        "Ningún rol dispone de `bedrock:InvokeModel`; ninguna Lambda lo recibirá; otro rol lo tendrá",
+        "Ningún rol dispone de `bedrock:InvokeModel`; se concede `bedrock:InvokeModel`",
+        "Ningún rol dispone de `bedrock:InvokeModel`, pero puede solicitarlo",
+        "Nadie puede conceder `bedrock:InvokeModel`; sin embargo, se habilitará",
+        "Ningún rol dispone de `bedrock:InvokeModel` y otro rol lo tendrá",
+        "Ningún rol dispone de `bedrock:InvokeModel` o la Lambda lo recibirá",
+        "Ningún rol dispone de `bedrock:InvokeModel` y se concede el permiso",
+    ],
+    ids=[
+        "pero",
+        "sin-embargo",
+        "no-obstante",
+        "aunque",
+        "en-cambio",
+        "posteriormente",
+        "despues",
+        "sentence",
+        "line",
+        "list-items",
+        "table-rows",
+        "elliptic-lo-tendra",
+        "elliptic-si-dispone",
+        "elliptic-permission",
+        "two-negatives-third-grant",
+        "repeated-action",
+        "positive-solicitation",
+        "elliptic-habilitara",
+        "coordinated-new-subject-y",
+        "coordinated-new-subject-o",
+        "coordinated-impersonal-grant",
+    ],
+)
+def test_subject_negation_does_not_propagate(repository: Path, assertion: str):
+    replace_iam_assertion(repository, assertion)
+    rejected(repository, "Bedrock IAM contradiction")
+
+
+@pytest.mark.parametrize(
+    "assertion",
+    [
+        "Ningún rol deja de disponer de `bedrock:InvokeModel`",
+        "Ningún rol está impedido de obtener `bedrock:InvokeModel`",
+        "Ningún rol tiene prohibido recibir `bedrock:InvokeModel`",
+        "Nadie impide conceder `bedrock:InvokeModel`",
+        "Ningún control prohíbe habilitar `bedrock:InvokeModel`",
+        "Ninguna política evita añadir `bedrock:InvokeModel`",
+        "Ningún rol carece de `bedrock:InvokeModel`",
+        "Nadie descarta conceder `bedrock:InvokeModel`",
+    ],
+    ids=[
+        "deja-de-disponer",
+        "impedido-de-obtener",
+        "tiene-prohibido-recibir",
+        "impide-conceder",
+        "prohibe-habilitar",
+        "evita-anadir",
+        "carece-de",
+        "descarta-conceder",
+    ],
+)
+def test_negatively_quantified_double_negative_is_rejected(
+    repository: Path,
+    assertion: str,
+):
+    replace_iam_assertion(repository, assertion)
+    rejected(repository, "Bedrock IAM contradiction")
+
+
+@pytest.mark.parametrize(
+    "assertion",
+    [
+        "Un rol dispone de `bedrock:InvokeModel`",
+        "Algún rol dispone de `bedrock:InvokeModel`",
+        "Todos los roles disponen de `bedrock:InvokeModel`",
+        "Cualquier rol puede obtener `bedrock:InvokeModel`",
+        "Existe un rol con `bedrock:InvokeModel`",
+        "Al menos un rol dispone de `bedrock:InvokeModel`",
+    ],
+    ids=[
+        "un-rol",
+        "algun-rol",
+        "todos-los-roles",
+        "cualquier-rol",
+        "existe-un-rol",
+        "al-menos-un-rol",
+    ],
+)
+def test_ordinary_positive_iam_subject_is_rejected(repository: Path, assertion: str):
+    replace_iam_assertion(repository, assertion)
+    rejected(repository, "Bedrock IAM contradiction")
+
+
+def test_subject_negation_outside_fence_is_valid(repository: Path):
+    replace_iam_assertion(
+        repository,
+        "Ningún rol dispone de `bedrock:InvokeModel`;\n```text\nejemplo no normativo\n```\n",
+    )
+    run_guardrail(repository)
+
+
+def test_iam_grant_inside_fence_after_subject_negation_is_ignored(repository: Path):
+    replace_iam_assertion(
+        repository,
+        "Ningún rol dispone de `bedrock:InvokeModel`;\n"
+        "```text\nSe concede `bedrock:InvokeModel`.\n```\n",
+    )
+    run_guardrail(repository)
+
+
+def test_subject_negation_inside_fence_does_not_hide_external_grant(repository: Path):
+    replace_iam_assertion(
+        repository,
+        "\n```text\nNingún rol dispone de `bedrock:InvokeModel`.\n```\n"
+        "Se concede `bedrock:InvokeModel`\n",
+    )
+    rejected(repository, "Bedrock IAM contradiction")
+
+
+def test_unterminated_fence_with_subject_negation_is_rejected(repository: Path):
+    replace_iam_assertion(
+        repository,
+        "\n```text\nNingún rol dispone de `bedrock:InvokeModel`",
+    )
+    rejected(repository, "unterminated fenced code block")

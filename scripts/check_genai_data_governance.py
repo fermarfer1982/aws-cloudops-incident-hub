@@ -38,16 +38,35 @@ REGION_PATTERN = re.compile(
     re.IGNORECASE,
 )
 BEDROCK_ACTION = "bedrock:invokemodel"
-IAM_GRANT_PATTERN = re.compile(
-    r"\b(?:conced\w*|autoriz\w*|otorg\w*|habilit\w*|permit\w*|asign\w*|"
+IAM_GRANT_WORD = (
+    r"(?:conced\w*|autoriz\w*|otorg\w*|habilit\w*|permit\w*|asign\w*|"
     r"añad\w*|agreg\w*|inclu\w*|recib\w*|obt\w*|dispon\w*|tendr\w*|"
-    r"tien\w*|aplic\w*)\b",
+    r"tien\w*|aplic\w*|solicit\w*|exist\w*)"
+)
+IAM_GRANT_PATTERN = re.compile(
+    rf"\b{IAM_GRANT_WORD}\b",
+    re.IGNORECASE,
+)
+IAM_NEGATIVE_SUBJECT = r"(?:ning[uú]n(?:[ao]s?)?|nadie)"
+IAM_NEGATIVE_SUBJECT_PATTERN = re.compile(rf"\b{IAM_NEGATIVE_SUBJECT}\b", re.IGNORECASE)
+IAM_POSITIVE_SUBJECT_RESET_PATTERN = re.compile(
+    rf"(?:,|\b(?:y|o)\b)\s*(?:(?:otr[oa]s?|un(?:a|os|as)?|alg[uú]n(?:a|os|as)?|tod[oa]s?|"
+    rf"el|la|los|las|cualquier)\b|se(?:\s+{IAM_GRANT_WORD})?\s*$)",
+    re.IGNORECASE,
+)
+IAM_AMBIGUOUS_SUBJECT_PATTERN = re.compile(
+    rf"\b{IAM_NEGATIVE_SUBJECT}\b[^.;\n|]*\b(?:salvo|excepto|a\s+menos\s+que)\b",
     re.IGNORECASE,
 )
 IAM_DOUBLE_NEGATION_PATTERN = re.compile(
-    r"(?:no\s+se\s+proh[ií]b\w*|no\s+est[aá]\s+prohibid\w*|"
-    r"no\s+se\s+descart\w*|nada\s+impid\w*)[^.;\n|]*"
-    r"(?:conced\w*|autoriz\w*|habilit\w*)",
+    rf"(?:no\s+se\s+proh[ií]b\w*|no\s+est[aá]\s+prohibid\w*|"
+    rf"no\s+se\s+descart\w*|nada\s+impid\w*)[^.;\n|]*"
+    rf"(?:conced\w*|autoriz\w*|habilit\w*)|"
+    rf"\b{IAM_NEGATIVE_SUBJECT}\b[^.;\n|]*\b(?:"
+    rf"dej\w*\s+de|(?:est\w*\s+)?impedid\w*\s+de|"
+    rf"(?:tien\w*\s+)?prohibid\w*(?:\s+de)?|impid\w*|"
+    rf"proh[ií]b\w*|evit\w*|carec\w*\s+de|descart\w*)\b"
+    rf"[^.;\n|]*(?:{IAM_GRANT_WORD}|{re.escape(BEDROCK_ACTION)})",
     re.IGNORECASE,
 )
 
@@ -105,7 +124,8 @@ def split_normative_clauses(document: str) -> list[str]:
     protected = re.sub(re.escape(BEDROCK_ACTION), placeholder, document, flags=re.IGNORECASE)
     boundaries = re.compile(
         r"(?:\r?\n|[.;|]|(?<!`)\:(?!`)|"
-        r"\b(?:pero|sin\s+embargo|no\s+obstante|aunque|en\s+cambio|también|posteriormente)\b)",
+        r"\b(?:pero|sin\s+embargo|no\s+obstante|aunque|en\s+cambio|"
+        r"también|posteriormente|despu[eé]s)\b)",
         re.IGNORECASE,
     )
     return [
@@ -121,9 +141,15 @@ def _grant_is_locally_negated(
     inherited_incomplete_negation: bool = False,
 ) -> bool:
     prefix = clause[: match.start()].rstrip()
-    return (inherited_incomplete_negation and not prefix) or (
+    verbal_negation = (
         re.search(r"\b(?:no|nunca|ni)(?:\s+se)?\s*$", prefix, re.IGNORECASE) is not None
     )
+    negative_subjects = list(IAM_NEGATIVE_SUBJECT_PATTERN.finditer(prefix))
+    subject_negation = False
+    if negative_subjects and IAM_AMBIGUOUS_SUBJECT_PATTERN.search(clause) is None:
+        subject_scope = prefix[negative_subjects[-1].end() :]
+        subject_negation = IAM_POSITIVE_SUBJECT_RESET_PATTERN.search(subject_scope) is None
+    return (inherited_incomplete_negation and not prefix) or verbal_negation or subject_negation
 
 
 def _coordinated_negative_assertion(clause: str) -> bool:
@@ -145,6 +171,7 @@ def validate_bedrock_iam_assertions(policy: str) -> None:
         lower = clause.lower()
         contains_action = BEDROCK_ACTION in lower
         applies_to_action = contains_action or action_context
+        grants: list[re.Match[str]] = []
         if applies_to_action:
             require(
                 IAM_DOUBLE_NEGATION_PATTERN.search(clause) is None,
@@ -162,7 +189,7 @@ def validate_bedrock_iam_assertions(policy: str) -> None:
         incomplete_negation = contains_action and re.search(
             r"\b(?:no|no\s+se)\s*$", clause, re.IGNORECASE
         ) is not None
-        action_context = contains_action
+        action_context = contains_action or (applies_to_action and bool(grants))
 
 
 def parse_sections(document: str) -> dict[str, str]:
