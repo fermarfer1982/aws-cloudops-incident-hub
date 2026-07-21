@@ -34,7 +34,7 @@ No persistent production traffic profile, RTO, RPO, SLO, compliance regime, data
 | Pillar | Current rating | Main strength | Main risk |
 |---|---|---|---|
 | Operational excellence | Medium | IaC, CI, runbooks, laboratory ownership, validated laboratory alert routing and cleanup | No approved production SLO, on-call or organizational alert-routing process |
-| Security | Medium for production reference | Cognito JWT scopes, OIDC federation, explicit CORS, throttling and supply-chain automation | Data classification, broader abuse protection, operational triage and durable release evidence remain incomplete |
+| Security | Medium for production reference | Cognito JWT scopes, OIDC federation, explicit CORS, throttling, supply-chain automation and synthetic-laboratory GenAI data governance | Real-data governance, broader abuse protection, operational triage and durable release evidence remain incomplete |
 | Reliability | Medium | EventBridge, SQS, DLQ, retries, idempotency and alarms | No approved RTO/RPO, restore test or regional recovery strategy |
 | Performance efficiency | Medium | Query pagination, incremental metrics, ARM64 and validated local/AWS baselines | No sustained-capacity test or comparative tuning |
 | Cost optimization | Low for laboratory / Medium for production | Ephemeral lifecycle, two budgets and anomaly detection evidence | No production unit economics, tag evidence or approved production budget |
@@ -42,7 +42,7 @@ No persistent production traffic profile, RTO, RPO, SLO, compliance regime, data
 
 ### Overall conclusion
 
-WA-001 through WA-005 are closed in the reference implementation: the cloud API is authenticated and scope-authorized, CORS is explicit, operational listings use DynamoDB Query and metrics are materialized transactionally. WA-014 also validates real `ALARM` and `OK` delivery through SNS, Amazon Q Developer and Slack for the laboratory. This is a **validated laboratory reference architecture**, but it remains **not production-ready** because approved production SLOs, organizational ownership and on-call coverage, tested restore, organizational alert routing, durable release evidence, data governance, broader abuse protection and sustained-capacity evidence are still missing.
+WA-001 through WA-005 are closed in the reference implementation: the cloud API is authenticated and scope-authorized, CORS is explicit, operational listings use DynamoDB Query and metrics are materialized transactionally. WA-014 also validates real `ALARM` and `OK` delivery through SNS, Amazon Q Developer and Slack for the laboratory. WA-021 is closed only as a policy for a future single-inference test with synthetic laboratory data; implementation and real-data governance remain open. This is a **validated laboratory reference architecture**, but it remains **not production-ready** because approved production SLOs, organizational ownership and on-call coverage, tested restore, organizational alert routing, durable release evidence, real-data governance, broader abuse protection and sustained-capacity evidence are still missing.
 
 ---
 
@@ -85,6 +85,9 @@ Assign organizational production owners, approve measurable SLOs, connect alarms
 
 - GitHub Actions uses OIDC and temporary STS credentials.
 - API Gateway uses a Cognito JWT authorizer.
+- The [política de gobierno de datos GenAI](genai-data-governance.md) closes
+  WA-021 only for a reviewed synthetic fixture and defines classification,
+  retention, deletion, fail-closed rejection and mandatory human review.
 - Custom scopes separate read, write and manage operations.
 - Only `GET /health` is public in AWS.
 - CORS uses an explicit allowlist.
@@ -100,14 +103,14 @@ Assign organizational production owners, approve measurable SLOs, connect alarms
 | SEC-01 | API Gateway endpoint has no authentication or authorization | Critical | Closed in reference implementation |
 | SEC-02 | CORS allows every origin | High | Closed in reference implementation |
 | SEC-03 | WAF decision and abuse protection remain incomplete | High | Throttling defined and validated at 5 requests/s; broader protection open |
-| SEC-04 | No formal data classification, retention policy or privacy assessment | High | Open |
+| SEC-04 | No formal data classification, retention policy or privacy assessment | High | Closed only for the synthetic GenAI laboratory scope by WA-021; real-data, legal, privacy and production approval remain open |
 | SEC-05 | Supply-chain controls lack complete operational and release evidence | Medium | CodeQL, Dependabot, the secret guardrail and SBOM workflow are implemented; repository settings, triage and durable release-bound SBOM evidence remain partial |
 | SEC-06 | Effective CDK bootstrap-role permissions require separate review | Medium | Open |
 | SEC-07 | Central CloudTrail, GuardDuty and Security Hub remain target-state controls | Medium | Deferred to landing zone implementation |
 
 ## Recommended actions
 
-Validate federation and client separation in the target environment, validate broader abuse controls, define data governance, confirm repository security settings and triage, and bind a verified SBOM to the future release.
+Validate federation and client separation in the target environment, validate broader abuse controls, extend data governance beyond the synthetic laboratory scope, confirm repository security settings and triage, and bind a verified SBOM to the future release. Region, model, access, IAM, cost, a one-invocation workflow, secure human review and real inference remain blockers for Amazon Bedrock.
 
 ## Pillar rating
 
@@ -262,7 +265,7 @@ Measure useful work per Lambda invocation and GB-second, define retention by bus
 3. **REL-01 / REL-02 / REL-03:** Approve the proposed RTO/RPO, enable recovery controls and test restore.
 4. **OPS-01 / OPS-02:** Assign ownership and approve SLOs.
 5. **COST-01:** Laboratory financial controls are evidenced; approve production budgets, tagging and unit economics.
-6. **SEC-03 / SEC-04 / SEC-05:** Validate broader abuse protection, define data governance, confirm operational security settings and triage, and publish durable release-bound SBOM evidence.
+6. **SEC-03 / SEC-04 / SEC-05:** WA-021 defines governance only for synthetic GenAI laboratory data; validate broader abuse protection and real-data governance, confirm operational security settings and triage, and publish durable release-bound SBOM evidence.
 
 ## Accepted laboratory risks
 
@@ -298,6 +301,7 @@ Repeat this review before real users or data, after identity or recovery changes
 - `docs/wa-014-chatops-evidence-2026-07-13.md`
 - `docs/evidence/wa-014/`
 - `docs/p1-operational-security-supply-chain.md`
+- `docs/genai-data-governance.md`
 - `.github/workflows/sbom.yml`
 - `docs/adr/012-amazon-q-slack-chatops.md`
 - `scripts/check_p0_controls.py`

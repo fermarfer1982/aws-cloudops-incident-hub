@@ -434,7 +434,7 @@ El workload continúa **sin declararse production-ready** hasta obtener evidenci
 - [ ] Obtener evidencia P1 real de restore y routing operacional de producción.
 - [ ] WA-019: ejecutar y versionar la evidencia del game day.
 - [ ] WA-020: ejercer la creación de release y su rollback según el runbook.
-- [ ] WA-021: definir clasificación y retención de datos.
+- [x] WA-021: clasificación y retención completadas para el laboratorio sintético; datos reales, privacidad organizativa y producción permanecen pendientes.
 - [ ] WA-022: asociar un SBOM verificable a la futura release.
 - [ ] WA-023: estimar el coste por 1.000 incidencias.
 
