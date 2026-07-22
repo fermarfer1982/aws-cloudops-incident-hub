@@ -201,12 +201,12 @@ def test_intact_copy_passes(repository: Path):
         (
             ' > "$raw_dir/identity.json"',
             "",
-            "raw AWS stdout and stderr redirected",
+            "(?:raw AWS stdout and stderr redirected|AWS command arguments are not allowed)",
         ),
         (
             ' --output json > "$raw_dir/models.json"',
             ' > "$raw_dir/models.json"',
-            "raw AWS stdout and stderr redirected",
+            "(?:raw AWS stdout and stderr redirected|AWS command arguments are not allowed)",
         ),
         (
             "set -euo pipefail",
@@ -748,3 +748,151 @@ def test_error_categories_and_handler_are_fixed(
 ) -> None:
     replace(repository, FILES[0], old, new)
     rejected(repository, control)
+
+
+SECURE_PATH_MUTATIONS = (
+    ('raw_dir="${work_dir}/raw"', 'raw_dir="${GITHUB_WORKSPACE}/raw"'),
+    ('raw_dir="${work_dir}/raw"', 'raw_dir="./raw"'),
+    ('raw_dir="${work_dir}/raw"', 'raw_dir="/tmp/raw"'),
+    ('raw_dir="${work_dir}/raw"', 'raw_dir="/var/tmp/raw"'),
+    ('raw_dir="${work_dir}/raw"', 'raw_dir="${HOME}/raw"'),
+    ('raw_dir="${work_dir}/raw"', 'raw_dir="${PWD}/raw"'),
+    ('raw_dir="${work_dir}/raw"', 'raw_dir="${work_dir}/../raw"'),
+    (
+        'candidate="${work_dir}/candidate.json"',
+        'candidate="${GITHUB_WORKSPACE}/candidate.json"',
+    ),
+    ('candidate="${work_dir}/candidate.json"', 'candidate="candidate.json"'),
+    ('candidate="${work_dir}/candidate.json"', 'candidate="../candidate.json"'),
+    (
+        '"$raw_dir/identity.json"',
+        '"${GITHUB_WORKSPACE}/identity.json"',
+    ),
+    (
+        '"$raw_dir/identity.stderr"',
+        '"${GITHUB_WORKSPACE}/identity.stderr"',
+    ),
+    (
+        'candidate="${work_dir}/candidate.json"',
+        'candidate="${RUNNER_TEMP}/candidate.json"',
+    ),
+    (
+        'raw_dir="${work_dir}/raw"',
+        'raw_dir="${work_dir}/raw"\n          raw_dir="/tmp/raw"',
+    ),
+    (
+        'candidate="${work_dir}/candidate.json"',
+        'candidate="${work_dir}/candidate.json"\n          candidate="/tmp/candidate.json"',
+    ),
+    (
+        'mkdir -p "$raw_dir"',
+        'mkdir -p "$raw_dir"\n          ln -s "${GITHUB_WORKSPACE}" "${work_dir}/raw-link"',
+    ),
+    (
+        'mkdir -p "$raw_dir"',
+        'mkdir -p "$raw_dir"\n          ln -s "${GITHUB_WORKSPACE}/candidate.json" "$candidate"',
+    ),
+    ('cleanup() { rm -rf "$work_dir"; }', 'cleanup() { rm -rf "$raw_dir"; }'),
+    ('cleanup() { rm -rf "$work_dir"; }', 'cleanup() { rm -f "$candidate"; }'),
+    ('cleanup() { rm -rf "$work_dir"; }', 'cleanup() { rm -rf "/tmp/other"; }'),
+    (
+        'work_dir="$(mktemp -d "${RUNNER_TEMP}/bedrock-preflight.XXXXXX")"',
+        'work_dir="$(mktemp "${RUNNER_TEMP}/bedrock-preflight.XXXXXX")"',
+    ),
+    (
+        'work_dir="$(mktemp -d "${RUNNER_TEMP}/bedrock-preflight.XXXXXX")"',
+        'work_dir="${RUNNER_TEMP}/bedrock-preflight"',
+    ),
+    (
+        'work_dir="$(mktemp -d "${RUNNER_TEMP}/bedrock-preflight.XXXXXX")"',
+        'work_dir="/tmp/bedrock-preflight"',
+    ),
+    ("trap cleanup EXIT", "trap cleanup INT TERM"),
+)
+
+
+@pytest.mark.parametrize(("old", "new"), SECURE_PATH_MUTATIONS)
+def test_all_raw_paths_remain_in_secure_tree(
+    repository: Path, old: str, new: str
+) -> None:
+    replace(repository, FILES[0], old, new)
+    rejected(
+        repository,
+        "(?:raw files must remain under the secure temporary directory|secure temporary directory|raw temporary cleanup|raw temporary cleanup trap|raw AWS stdout and stderr redirected)",
+    )
+
+
+AWS_ARGUMENT_MUTATIONS = (
+    ("--no-cli-pager --output json", "--profile attacker --no-cli-pager --output json"),
+    ("--no-cli-pager --output json", "--endpoint-url https://example.com --no-cli-pager --output json"),
+    ("--no-cli-pager --output json", "--debug --no-cli-pager --output json"),
+    ("--no-cli-pager --output json", "--no-verify-ssl --no-cli-pager --output json"),
+    ("--no-cli-pager --output json", "--ca-bundle example.pem --no-cli-pager --output json"),
+    ("--no-cli-pager --output json", "--cli-connect-timeout 1 --no-cli-pager --output json"),
+    ("--no-cli-pager --output json", "--cli-read-timeout 1 --no-cli-pager --output json"),
+    ("--no-cli-pager --output json", "--color on --no-cli-pager --output json"),
+    ("--no-cli-pager --output json", "--query Account --no-cli-pager --output json"),
+    ("--no-cli-pager --output json", "--unknown value --no-cli-pager --output json"),
+    ("--no-cli-pager --output json", "extra --no-cli-pager --output json"),
+    ("--no-cli-pager --output json", "--output json"),
+    ("--no-cli-pager --output json", "--no-cli-pager"),
+    ("--no-cli-pager --output json", "--no-cli-pager --output text"),
+    ("--no-cli-pager --output json", "--no-cli-pager --output yaml"),
+    ("--no-cli-pager --output json", "--no-cli-pager --no-cli-pager --output json"),
+    ("--region eu-west-1 --no-cli-pager", "--region us-east-1 --no-cli-pager"),
+    ("--region eu-west-1 --no-cli-pager", "--region eu-west-1 --region eu-west-1 --no-cli-pager"),
+    ("--region eu-west-1 --no-cli-pager", "--region $SOURCE_REGION --no-cli-pager"),
+    ("--region eu-west-1 --no-cli-pager", "$REGION_FLAG eu-west-1 --no-cli-pager"),
+    (
+        "--model-identifier amazon.nova-lite-v1:0",
+        "--model-identifier amazon.nova-pro-v1:0",
+    ),
+    (
+        "--model-identifier amazon.nova-lite-v1:0",
+        "--model-identifier $MODEL_ID",
+    ),
+    (
+        "--inference-profile-identifier eu.amazon.nova-lite-v1:0",
+        "--inference-profile-identifier us.amazon.nova-lite-v1:0",
+    ),
+    (
+        "--inference-profile-identifier eu.amazon.nova-lite-v1:0",
+        "--inference-profile-identifier $INFERENCE_PROFILE_ID",
+    ),
+    ("--region eu-west-1 --no-cli-pager", "--no-cli-pager --region eu-west-1"),
+)
+
+
+@pytest.mark.parametrize(("old", "new"), AWS_ARGUMENT_MUTATIONS)
+def test_aws_argument_sequences_are_exact(
+    repository: Path, old: str, new: str
+) -> None:
+    replace(repository, FILES[0], old, new)
+    rejected(
+        repository,
+        "(?:AWS command arguments are not allowed|AWS endpoint and TLS controls|debug disabled)",
+    )
+
+
+AWS_ENVIRONMENT_MUTATIONS = (
+    "AWS_PROFILE=attacker",
+    "AWS_DEFAULT_PROFILE=attacker",
+    "AWS_SHARED_CREDENTIALS_FILE=/tmp/credentials",
+    "AWS_CONFIG_FILE=/tmp/config",
+    "AWS_ACCESS_KEY_ID=example",
+    "AWS_SECRET_ACCESS_KEY=example",
+    "AWS_SESSION_TOKEN=example",
+    "AWS_ROLE_ARN=example",
+    "AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/token",
+    "credential_process=example",
+    "source_profile=example",
+)
+
+
+@pytest.mark.parametrize("declaration", AWS_ENVIRONMENT_MUTATIONS)
+def test_manual_aws_credential_environment_is_rejected(
+    repository: Path, declaration: str
+) -> None:
+    anchor = "          set +e\n          aws sts get-caller-identity"
+    replace(repository, FILES[0], anchor, f"          {declaration}\n{anchor}")
+    rejected(repository, "manual AWS credential configuration is forbidden")

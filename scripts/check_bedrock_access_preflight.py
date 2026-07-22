@@ -62,6 +62,60 @@ ALLOWED_AWS_COMMANDS = {
     "aws bedrock list-inference-profiles",
     "aws sts get-caller-identity",
 }
+ALLOWED_AWS_INVOCATIONS = {
+    (
+        "aws",
+        "sts",
+        "get-caller-identity",
+        "--no-cli-pager",
+        "--output",
+        "json",
+    ),
+    (
+        "aws",
+        "bedrock",
+        "list-foundation-models",
+        "--region",
+        "eu-west-1",
+        "--no-cli-pager",
+        "--output",
+        "json",
+    ),
+    (
+        "aws",
+        "bedrock",
+        "get-foundation-model",
+        "--model-identifier",
+        "amazon.nova-lite-v1:0",
+        "--region",
+        "eu-west-1",
+        "--no-cli-pager",
+        "--output",
+        "json",
+    ),
+    (
+        "aws",
+        "bedrock",
+        "list-inference-profiles",
+        "--region",
+        "eu-west-1",
+        "--no-cli-pager",
+        "--output",
+        "json",
+    ),
+    (
+        "aws",
+        "bedrock",
+        "get-inference-profile",
+        "--inference-profile-identifier",
+        "eu.amazon.nova-lite-v1:0",
+        "--region",
+        "eu-west-1",
+        "--no-cli-pager",
+        "--output",
+        "json",
+    ),
+}
 ERROR_CATEGORIES = {
     "identity_check_failed",
     "foundation_models_list_failed",
@@ -181,6 +235,7 @@ def shell_tokens(line: str) -> list[str]:
 def validate_static_shell(workflow: str) -> None:
     lines = shell_lines(workflow)
     commands: list[str] = []
+    invocations: list[tuple[str, ...]] = []
     for line in lines:
         tokens = shell_tokens(line)
         if not tokens:
@@ -213,12 +268,27 @@ def validate_static_shell(workflow: str) -> None:
             if aws_match is None or "$(" in line or "`" in line:
                 fail("dynamic AWS command is forbidden")
             commands.append("aws " + re.sub(r"\s+", " ", aws_match.group(1)))
+            try:
+                redirect = tokens.index(">")
+            except ValueError:
+                fail("AWS command arguments are not allowed")
+            invocation = tuple(tokens[:redirect])
+            require(
+                invocation in ALLOWED_AWS_INVOCATIONS,
+                "AWS command arguments are not allowed",
+            )
+            invocations.append(invocation)
         elif re.search(r"\baws\b", line) and (
             "$" in line or "(" in line or re.match(r"^\s*[A-Za-z_].*\{", line)
         ):
             fail("dynamic AWS command is forbidden")
     require(set(commands) == ALLOWED_AWS_COMMANDS, "exact read-only AWS commands")
     require(len(commands) == len(ALLOWED_AWS_COMMANDS), "exact read-only AWS commands")
+    require(
+        set(invocations) == ALLOWED_AWS_INVOCATIONS
+        and len(invocations) == len(ALLOWED_AWS_INVOCATIONS),
+        "AWS command arguments are not allowed",
+    )
 
 
 def validate_workflow(workflow: str) -> None:
@@ -314,9 +384,35 @@ def validate_workflow(workflow: str) -> None:
     require("set -euo pipefail" in workflow, "strict shell mode")
     require("set +x" in workflow and "set -x" not in workflow, "shell tracing disabled")
     require("umask 077" in workflow, "private temporary permissions")
-    require('mktemp -d "${RUNNER_TEMP}/bedrock-preflight.XXXXXX"' in workflow, "secure temporary directory")
+    require(
+        workflow.count(
+            'work_dir="$(mktemp -d "${RUNNER_TEMP}/bedrock-preflight.XXXXXX")"'
+        )
+        == 1,
+        "secure temporary directory",
+    )
+    require(
+        workflow.count('raw_dir="${work_dir}/raw"') == 1
+        and workflow.count('candidate="${work_dir}/candidate.json"') == 1,
+        "raw files must remain under the secure temporary directory",
+    )
+    require(
+        len(re.findall(r"(?m)^\s*raw_dir=", workflow)) == 1
+        and len(re.findall(r"(?m)^\s*candidate=", workflow)) == 1,
+        "raw files must remain under the secure temporary directory",
+    )
+    require(
+        workflow.count('mkdir -p "$raw_dir"') == 1
+        and not re.search(r"(?m)^\s*ln\s+-s(?:\s|$)", workflow)
+        and "../" not in workflow,
+        "raw files must remain under the secure temporary directory",
+    )
     require("trap cleanup EXIT" in workflow, "raw temporary cleanup trap")
-    require('rm -rf "$work_dir"' in workflow, "raw temporary cleanup")
+    require(
+        workflow.count('cleanup() { rm -rf "$work_dir"; }') == 1
+        and workflow.count('rm -rf "$work_dir"') == 1,
+        "raw temporary cleanup",
+    )
     require("scripts/sanitize_bedrock_preflight.py" in workflow, "sanitizer invocation")
     require("$GITHUB_STEP_SUMMARY" not in workflow, "no step summary evidence")
     require("$GITHUB_OUTPUT" not in workflow, "no GitHub output evidence")
@@ -339,6 +435,23 @@ def validate_workflow(workflow: str) -> None:
     require(
         "--endpoint-url" not in workflow and "--no-verify-ssl" not in workflow,
         "AWS endpoint and TLS controls",
+    )
+    forbidden_aws_environment = (
+        "AWS_PROFILE",
+        "AWS_DEFAULT_PROFILE",
+        "AWS_SHARED_CREDENTIALS_FILE",
+        "AWS_CONFIG_FILE",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AWS_ROLE_ARN",
+        "AWS_WEB_IDENTITY_TOKEN_FILE",
+        "credential_process",
+        "source_profile",
+    )
+    require(
+        not any(name in workflow for name in forbidden_aws_environment),
+        "manual AWS credential configuration is forbidden",
     )
 
     validate_static_shell(workflow)
