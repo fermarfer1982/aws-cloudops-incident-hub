@@ -17,6 +17,8 @@ y no cambia el estado Proposed de ADR-013. El
 [diseño de acceso e IAM de mínimo privilegio](bedrock-access-and-iam-design.md)
 define únicamente una verificación futura y una plantilla deliberadamente inerte;
 no aplica permisos ni comprueba la cuenta.
+El [preflight manual de acceso](bedrock-access-preflight.md) implementa solo el
+workflow desactivado y sus guardrails; no se ha configurado ni ejecutado.
 
 ## Implementation status
 

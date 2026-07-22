@@ -61,6 +61,8 @@ as `GetFoundationModel`, `ListFoundationModels`, `GetInferenceProfile`, or an
 applicable availability query. This PR grants none of them. Audit results must
 record whether they describe catalog, regional availability, account state or
 IAM; these are not interchangeable and none alone proves effective invocation.
+The gated [account-access preflight](bedrock-access-preflight.md) now specifies
+that audit path as disabled workflow code; it has not been executed or authorized.
 
 ## Mandatory future sequence (not executed)
 

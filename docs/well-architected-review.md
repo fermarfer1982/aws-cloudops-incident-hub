@@ -111,6 +111,7 @@ Assign organizational production owners, approve measurable SLOs, connect alarms
 ## Recommended actions
 
 Validate federation and client separation in the target environment, validate broader abuse controls, extend data governance beyond the synthetic laboratory scope, confirm repository security settings and triage, and bind a verified SBOM to the future release. Region, model and cost have a reversible disabled proposal with a local guardrail. WA-031 now documents the future account-access sequence and an inert least-privilege IAM template, but account access, current destinations and terms revalidation, SCP compatibility, IAM application, a one-invocation workflow, secure human review and real inference remain blockers for Amazon Bedrock; the decision is still NO-GO.
+WA-032 adds a disabled, manual, read-only preflight workflow design with OIDC and sanitized ephemeral evidence. It has not been executed; its Environment and audit role remain unconfigured, and it does not complete any readiness gate or authorize inference.
 
 ## Pillar rating
 
