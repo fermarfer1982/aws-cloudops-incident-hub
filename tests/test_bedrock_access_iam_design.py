@@ -256,7 +256,153 @@ def test_policy_structure_mutations_fail(repository: Path, mutation: str):
 )
 def test_documentary_contradictions_fail(repository: Path, claim: str):
     append_doc(repository, claim)
-    rejected(repository, "documentation contradiction")
+    rejected(repository, "contradictory")
+
+
+@pytest.mark.parametrize(
+    ("claim", "control"),
+    [
+        ("La política IAM ya está aplicada.", "contradictory IAM authorization"),
+        ("La política se encuentra aplicada.", "contradictory IAM authorization"),
+        ("IAM ha sido aplicado.", "contradictory IAM authorization"),
+        ("El permiso ya está adjuntado al rol.", "contradictory IAM authorization"),
+        ("La plantilla está desplegada.", "contradictory IAM authorization"),
+        ('Resource "*" está permitido.', "contradictory wildcard authorization"),
+        ('Se permite Resource: "*".', "contradictory wildcard authorization"),
+        ("Puede usarse cualquier recurso.", "contradictory wildcard authorization"),
+        ("Los wildcards de recurso están autorizados.", "contradictory wildcard authorization"),
+        ("bedrock:* está permitido.", "contradictory wildcard authorization"),
+        ("InvokeModel* está permitido.", "contradictory wildcard authorization"),
+        ("Se permite InvokeModelWithResponseStream.", "contradictory streaming authorization"),
+        ("El streaming está autorizado.", "contradictory streaming authorization"),
+        ("Puede utilizarse ConverseStream.", "contradictory streaming authorization"),
+        ("La aplicación podrá invocar respuestas en streaming.", "contradictory streaming authorization"),
+        ("La plantilla puede aplicarse directamente.", "contradictory direct-apply authorization"),
+        ("Puede desplegarse sin sustitución.", "contradictory direct-apply authorization"),
+        ("No es necesaria revisión humana.", "contradictory direct-apply authorization"),
+        ("La aprobación humana es opcional.", "contradictory direct-apply authorization"),
+        ("DO_NOT_APPLY puede ignorarse.", "contradictory direct-apply authorization"),
+        ("ListFoundationModels confirma que InvokeModel funcionará.", "contradictory catalog-access claim"),
+        ("GetFoundationModel garantiza acceso efectivo.", "contradictory catalog-access claim"),
+        ("GetFoundationModelAvailability garantiza acceso efectivo.", "contradictory catalog-access claim"),
+        ("La disponibilidad del catálogo prueba que la cuenta puede invocar.", "contradictory catalog-access claim"),
+        ("Una consulta de solo lectura demuestra autorización runtime.", "contradictory catalog-access claim"),
+        ("Las SCP no afectan a cross-region inference.", "contradictory SCP or destination claim"),
+        ("Puede omitirse una región de destino.", "contradictory SCP or destination claim"),
+        ("No es necesario autorizar todos los destinos.", "contradictory SCP or destination claim"),
+        ("Una región bloqueada no afecta a la solicitud.", "contradictory SCP or destination claim"),
+        ("Las regiones opt-in deben estar siempre habilitadas manualmente para que el servicio pueda enrutar.", "contradictory SCP or destination claim"),
+        ("El perfil Global está permitido.", "non-EU profile authorization"),
+        ("El perfil US está autorizado.", "non-EU profile authorization"),
+        ("Puede utilizarse un perfil estadounidense.", "non-EU profile authorization"),
+        ("Se permite inferencia en Estados Unidos.", "non-EU profile authorization"),
+        ("El perfil APAC está permitido.", "non-EU profile authorization"),
+        ("Asia-Pacífico puede usarse como fallback.", "non-EU profile authorization"),
+        ("La política runtime está aprobada para ejecución.", "contradictory execution authorization"),
+        ("AmazonBedrockFullAccess está permitido para el runtime.", "contradictory execution authorization"),
+        ("IAM no está aplicado; sin embargo, puede aplicarse directamente.", "contradictory direct-apply authorization"),
+        ("Streaming no está permitido, pero ConverseStream queda autorizado.", "contradictory streaming authorization"),
+        ("US está prohibido; no obstante, podrá usarse como contingencia.", "non-EU profile authorization"),
+        ("ListFoundationModels no garantiza acceso, aunque confirma que InvokeModel funcionará.", "contradictory catalog-access claim"),
+        ("Nota\n- El perfil Global está permitido.", "non-EU profile authorization"),
+        ("Campo | Estado\nGlobal | permitido", "non-EU profile authorization"),
+        ("EL   STREAMING   ESTÁ   AUTORIZADO!", "contradictory streaming authorization"),
+    ],
+)
+def test_normative_bypasses_are_rejected(
+    repository: Path, claim: str, control: str
+):
+    append_doc(repository, "\n" + claim + "\n")
+    rejected(repository, control)
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "La política IAM no está aplicada.",
+        "La plantilla no debe aplicarse.",
+        "IAM permanece sin aplicar.",
+        "Los wildcards de recurso están prohibidos.",
+        "Streaming no está permitido.",
+        "InvokeModelWithResponseStream no está autorizado.",
+        "Solo el perfil UE está permitido; US permanece prohibido.",
+        "Ninguna consulta de catálogo garantiza invocación.",
+    ],
+)
+def test_legitimate_prohibitions_are_accepted(repository: Path, claim: str):
+    append_doc(repository, "\n" + claim + "\n")
+    run_guardrail(repository)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "additional",
+        "missing",
+        "duplicate",
+        "altered_id",
+        "completed",
+        "evidence",
+        "timestamp",
+        "empty",
+        "text",
+        "completed_number",
+        "completed_string",
+        "top_level_number",
+        "top_level_true",
+        "iam_applied",
+        "access_verified",
+        "human_approval",
+        "inference_authorized",
+    ],
+)
+def test_readiness_checklist_mutations_are_rejected(
+    repository: Path, mutation: str
+):
+    data = load(repository, FILES[0])
+    checklist = data["readiness_checklist"]
+    if mutation == "additional":
+        checklist.append(copy.deepcopy(checklist[-1]))
+        checklist[-1]["id"] = "unexpected_step"
+    elif mutation == "missing":
+        checklist.pop()
+    elif mutation == "duplicate":
+        checklist[1]["id"] = checklist[0]["id"]
+    elif mutation == "altered_id":
+        checklist[0]["id"] = "source_region_checked"
+    elif mutation == "completed":
+        checklist[0]["completed"] = True
+    elif mutation == "evidence":
+        checklist[0]["evidence"] = "claimed"
+    elif mutation == "timestamp":
+        checklist[0]["verified_at"] = "2026-07-22T00:00:00Z"
+    elif mutation == "empty":
+        data["readiness_checklist"] = []
+    elif mutation == "text":
+        data["readiness_checklist"] = "pending"
+    elif mutation == "completed_number":
+        checklist[0]["completed"] = 0
+    elif mutation == "completed_string":
+        checklist[0]["completed"] = "false"
+    elif mutation == "top_level_number":
+        data["iam_policy_applied"] = 0
+    elif mutation == "top_level_true":
+        data["iam_policy_applied"] = True
+    else:
+        step_id = {
+            "iam_applied": "iam_policy_applied",
+            "access_verified": "account_access_verified",
+            "human_approval": "human_execution_approval",
+            "inference_authorized": "inference_authorized",
+        }[mutation]
+        next(step for step in checklist if step["id"] == step_id)["completed"] = True
+    write(repository, FILES[0], data)
+    control = (
+        "readiness step must remain incomplete"
+        if mutation in {"completed", "evidence", "timestamp", "completed_number", "completed_string", "iam_applied", "access_verified", "human_approval", "inference_authorized"}
+        else "(?:readiness checklist mismatch|configuration iam_policy_applied)"
+    )
+    rejected(repository, control)
 
 
 def test_accepted_adr_fails(repository: Path):

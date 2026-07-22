@@ -40,6 +40,7 @@ CONFIG_KEYS = {
     "inference_profile_id",
     "model_id",
     "policy_version",
+    "readiness_checklist",
     "required_invoke_action",
     "review_required_before_execution",
     "scp_compatibility_checked",
@@ -63,6 +64,25 @@ FALSE_GATES = {
 }
 SOURCE_KEYS = {"interpretation", "uncertainty", "url", "verified_at"}
 OFFICIAL_HOSTS = {"docs.aws.amazon.com", "aws.amazon.com"}
+READINESS_STEPS = [
+    "source_region_enabled_checked",
+    "official_destinations_revalidated",
+    "catalog_presence_checked",
+    "regional_availability_checked",
+    "runtime_identity_selected",
+    "runtime_identity_validated",
+    "rendered_policy_reviewed",
+    "iam_policy_applied",
+    "scp_compatibility_checked",
+    "destination_regions_authorized",
+    "account_access_checked",
+    "account_access_verified",
+    "terms_reviewed",
+    "non_inference_precheck_completed",
+    "human_execution_approval",
+    "inference_authorized",
+]
+CHECKLIST_KEYS = {"completed", "evidence", "id", "verified_at"}
 
 
 def fail(control: str) -> None:
@@ -167,6 +187,27 @@ def validate_config(data: dict[str, object]) -> None:
         require(exact(data[key], value), f"configuration {key}")
     for key in FALSE_GATES:
         require(exact(data[key], False), f"configuration {key}")
+    checklist = data["readiness_checklist"]
+    require(type(checklist) is list, "readiness checklist mismatch")
+    require(len(checklist) == len(READINESS_STEPS), "readiness checklist mismatch")
+    for index, expected_id in enumerate(READINESS_STEPS):
+        step = checklist[index]
+        require(
+            type(step) is dict and set(step) == CHECKLIST_KEYS,
+            "readiness checklist mismatch",
+        )
+        require(exact(step["id"], expected_id), "readiness checklist mismatch")
+        require(
+            exact(step["completed"], False)
+            and step["evidence"] is None
+            and step["verified_at"] is None,
+            "readiness step must remain incomplete",
+        )
+    checklist_by_id = {step["id"]: step["completed"] for step in checklist}
+    for key in FALSE_GATES & set(checklist_by_id):
+        require(
+            exact(data[key], checklist_by_id[key]), "readiness checklist mismatch"
+        )
     blockers = data["blockers"]
     require(type(blockers) is list and len(blockers) == 6, "exact blockers")
     require(
@@ -231,6 +272,170 @@ def validate_policy(data: dict[str, object]) -> None:
     require("Principal" not in rendered and "role/" not in rendered, "no principal or role ARN")
 
 
+def normative_clauses(document: str) -> list[str]:
+    """Split prose without allowing a negation to cross an adversative boundary."""
+    units: list[str] = []
+    paragraph: list[str] = []
+
+    def flush_paragraph() -> None:
+        if paragraph:
+            units.append(" ".join(paragraph))
+            paragraph.clear()
+
+    structural = re.compile(r"^\s*(?:[-+*]\s+|\d+[.)]\s+|#{1,6}\s+|\|)")
+    for line in document.splitlines():
+        if not line.strip():
+            flush_paragraph()
+        elif structural.match(line):
+            flush_paragraph()
+            units.append(line)
+        else:
+            paragraph.append(line)
+    flush_paragraph()
+
+    separators = re.compile(
+        r"(?:[;.!?]+\s+|\b(?:pero|sin embargo|"
+        r"no obstante|aunque|but|however|nevertheless|although)\b)",
+        re.IGNORECASE,
+    )
+    clauses: list[str] = []
+    for unit in units:
+        for clause in separators.split(unit):
+            normalized = re.sub(r"[`>#]+", " ", clause)
+            normalized = re.sub(r"^\s*(?:[-+*] |\d+[.)]\s*)", "", normalized)
+            normalized = re.sub(r"\s+", " ", normalized).strip().lower()
+            if normalized:
+                clauses.append(normalized)
+    return clauses
+
+
+def negates(clause: str, predicate: str) -> bool:
+    return re.search(
+        rf"\b(?:no|not|nunca|never|sin|without)\b[^;.!?]*\b{predicate}", clause
+    ) is not None
+
+
+def validate_normative_claims(document: str) -> None:
+    normalized_document = re.sub(r"\s+", " ", document).lower()
+    if re.search(
+        r"\bus\b[^;.!?]*(?:prohibid[oa]|no permitido)[^;.!?]*[;,.]\s*"
+        r"(?:no obstante|sin embargo|aunque|pero)[^;.!?]*"
+        r"(?:podr[aá] usarse|contingencia|fallback)",
+        normalized_document,
+    ):
+        fail("non-EU profile authorization")
+    if re.search(
+        r"listfoundationmodels[^;.!?]*no garantiza[^;.!?]*"
+        r"(?:aunque|pero|sin embargo|no obstante)[^;.!?]*confirma[^;.!?]*"
+        r"invokemodel funcionar[aá]",
+        normalized_document,
+    ):
+        fail("contradictory catalog-access claim")
+    for clause in normative_clauses(document):
+        iam_predicate = r"(?:aplicad[oa]|adjuntad[oa]|desplegad[oa])"
+        iam_assertion = re.search(
+            r"(?:pol[ií]tica iam(?: ya)? (?:est[aá]|se encuentra|ha sido)? ?aplicada|"
+            r"la pol[ií]tica se encuentra aplicada|iam (?:ya )?(?:est[aá]|ha sido) aplicado|"
+            r"iam is applied|"
+            r"permiso(?: ya)? (?:est[aá]|ha sido)? ?adjuntado al rol|"
+            r"plantilla (?:ya )?est[aá] desplegada)",
+            clause,
+        )
+        if iam_assertion and not negates(clause, iam_predicate):
+            fail("contradictory IAM authorization")
+
+        wildcard_subject = re.search(
+            r"(?:resource\s*:?[ ]*[\"']?\*[\"']?|cualquier recurso|"
+            r"wildcards? de recurso|bedrock:\*|invokemodel\*)",
+            clause,
+        )
+        authorization = re.search(
+            r"\b(?:permitid[oa]s?|autorizad[oa]s?|puede usarse|puede utilizarse|"
+            r"podr[aá] invocar|queda autorizado|se permite)\b",
+            clause,
+        )
+        if wildcard_subject and authorization and not negates(
+            clause, r"(?:permitid[oa]s?|autorizad[oa]s?|usarse)"
+        ):
+            fail("contradictory wildcard authorization")
+
+        streaming_subject = re.search(
+            r"(?:invokemodelwithresponsestream|conversestream|streaming|"
+            r"respuestas? en streaming)",
+            clause,
+        )
+        if streaming_subject and authorization and not negates(
+            clause, r"(?:permitid[oa]s?|autorizad[oa]s?|utilizarse|invocar)"
+        ):
+            fail("contradictory streaming authorization")
+
+        if re.search(
+            r"(?:(?:plantilla.*)?puede aplicarse directamente|"
+            r"(?:plantilla.*)?puede desplegarse sin sustituci[oó]n|"
+            r"no es necesaria revisi[oó]n humana|aprobaci[oó]n humana.*opcional|"
+            r"do_not_apply.*puede ignorarse)",
+            clause,
+        ):
+            fail("contradictory direct-apply authorization")
+
+        if re.search(
+            r"(?:listfoundationmodels|getfoundationmodel(?:availability)?|"
+            r"disponibilidad del cat[aá]logo|consulta de solo lectura).*(?:confirma|"
+            r"garantiza|prueba|demuestra).*(?:invokemodel funcionar[aá]|acceso efectivo|"
+            r"cuenta puede invocar|autorizaci[oó]n runtime)",
+            clause,
+        ) and not negates(clause, r"(?:confirma|garantiza|prueba|demuestra)"):
+            fail("contradictory catalog-access claim")
+
+        if re.search(
+            r"(?:scp.*no afectan.*cross-region|puede omitirse.*regi[oó]n de destino|"
+            r"no es necesario autorizar todos los destinos|regi[oó]n bloqueada no afecta|"
+            r"regiones opt-in deben estar siempre habilitadas manualmente|"
+            r"scp (?:was|has been) modified)",
+            clause,
+        ):
+            fail("contradictory SCP or destination claim")
+
+        non_eu = re.search(
+            r"(?:perfil\s+(?:global|us|estadounidense|apac)|estados unidos|"
+            r"asia[- ]pac[ií]fico|inferencia en estados unidos|\bglobal\b|"
+            r"\bus\b|\bapac\b)",
+            clause,
+        )
+        non_eu_use = re.search(
+            r"\b(?:permitid[oa]|autorizad[oa]|puede utilizarse|puede usarse|"
+            r"se permite|podr[aá] usarse|fallback|contingencia)\b",
+            clause,
+        )
+        non_eu_negated = negates(
+            clause, r"(?:permitid[oa]|autorizad[oa]|utilizarse|usarse)"
+        ) or re.search(
+            r"\b(?:no|sin)\b.*(?:global|\bus\b|apac|fallback)|"
+            r"(?:global|\bus\b|apac).*\bprohibid[oa]\b",
+            clause,
+        )
+        if non_eu and non_eu_use and not non_eu_negated:
+            fail("non-EU profile authorization")
+
+        execution_patterns = (
+            r"acceso de (?:la )?cuenta.*(?:est[aá]|queda) verificado",
+            r"account access (?:is|has been) (?:verified|checked)",
+            r"inferencia.*(?:est[aá]|queda) autorizada",
+            r"inference (?:is|has been) authorized",
+            r"pol[ií]tica runtime.*aprobada para ejecuci[oó]n",
+            r"proyecto.*(?:est[aá]|queda) production-ready",
+            r"the project (?:is|has been) production-ready",
+            r"adr-013.*(?:est[aá]|queda|is) accepted",
+            r"amazonbedrockfullaccess.*permitido para el runtime",
+            r"amazonbedrockfullaccess (?:is required|required)",
+        )
+        for pattern in execution_patterns:
+            if re.search(pattern, clause) and not negates(
+                clause, r"(?:verificado|autorizada|aprobada|production-ready|accepted|permitido)"
+            ):
+                fail("contradictory execution authorization")
+
+
 def validate_documents(root: Path) -> None:
     documents = {
         relative: strip_fences(read(root, relative))
@@ -247,23 +452,7 @@ def validate_documents(root: Path) -> None:
     require("WA-031" in documents[BACKLOG], "backlog design control")
     require("WA-031" in documents[REVIEW], "review design control")
     require("- **Estado:** Proposed" in documents[ADR], "ADR-013 remains Proposed")
-    combined = "\n".join(documents.values())
-    forbidden = (
-        r"^ADR-013 (?:is |está |esta )?Accepted\.?$",
-        r"^The project (?:is|está|esta|queda) production-ready\.?$",
-        r"^Inference (?:is |queda )?authorized\.?$",
-        r"^La inferencia (?:está|esta|queda) autorizada\.?$",
-        r"^IAM (?:is |está |esta |queda )?(?:applied|aplicad[oa])\.?$",
-        r"^Account access (?:is |has been )?(?:verified|checked)\.?$",
-        r"^El acceso de (?:la )?cuenta (?:está|esta|queda) verificado\.?$",
-        r"^SCP (?:was|has been|fue|ha sido) modified\.?$",
-        r"^AmazonBedrockFullAccess (?:is required|required|se concede|se aplica)\.?$",
-    )
-    for pattern in forbidden:
-        require(
-            not re.search(pattern, combined, re.IGNORECASE | re.MULTILINE),
-            "documentation contradiction",
-        )
+    validate_normative_claims("\n".join(documents.values()))
 
 
 def run_guardrail(root: Path) -> None:
