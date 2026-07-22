@@ -58,7 +58,7 @@ jobs:
           INFERENCE_PROFILE_ID: ${{ inputs.inference_profile_id }}
           PREFLIGHT_ROLE_ARN: ${{ secrets.AWS_BEDROCK_PREFLIGHT_ROLE_ARN }}
         run: |
-          set -eu
+          set -euo pipefail
           set +x
           test "$CONFIRM_NO_INFERENCE" = "true"
           test "$CONFIRM_READ_ONLY" = "true"
@@ -85,20 +85,47 @@ jobs:
           MODEL_ID: ${{ inputs.model_id }}
           INFERENCE_PROFILE_ID: ${{ inputs.inference_profile_id }}
         run: |
-          set -eu
+          set -euo pipefail
           set +x
-          raw_dir="${RUNNER_TEMP}/bedrock-preflight-raw"
-          candidate="${RUNNER_TEMP}/bedrock-preflight-candidate.json"
+          umask 077
+          work_dir="$(mktemp -d "${RUNNER_TEMP}/bedrock-preflight.XXXXXX")"
+          raw_dir="${work_dir}/raw"
+          candidate="${work_dir}/candidate.json"
           output="${GITHUB_WORKSPACE}/bedrock-preflight-evidence.json"
-          cleanup() { rm -rf "$raw_dir" "$candidate"; }
-          trap cleanup EXIT INT TERM
+          cleanup() { rm -rf "$work_dir"; }
+          fail_aws() { printf '%s\n' "$1" >&2; exit 1; }
+          trap cleanup EXIT
           mkdir -p "$raw_dir"
 
-          aws sts get-caller-identity --no-cli-pager --output json > "$raw_dir/identity.json"
-          aws bedrock list-foundation-models --no-cli-pager --region "$SOURCE_REGION" --output json > "$raw_dir/models.json"
-          aws bedrock get-foundation-model --model-identifier "$MODEL_ID" --no-cli-pager --region "$SOURCE_REGION" --output json > "$raw_dir/model.json"
-          aws bedrock list-inference-profiles --type-equals SYSTEM_DEFINED --no-cli-pager --region "$SOURCE_REGION" --output json > "$raw_dir/profiles.json"
-          aws bedrock get-inference-profile --inference-profile-identifier "$INFERENCE_PROFILE_ID" --no-cli-pager --region "$SOURCE_REGION" --output json > "$raw_dir/profile.json"
+          set +e
+          aws sts get-caller-identity --no-cli-pager --output json > "$raw_dir/identity.json" 2> "$raw_dir/identity.stderr"
+          status=$?
+          set -e
+          test "$status" -eq 0 || fail_aws "identity_check_failed"
+
+          set +e
+          aws bedrock list-foundation-models --no-cli-pager --region "$SOURCE_REGION" --output json > "$raw_dir/models.json" 2> "$raw_dir/models.stderr"
+          status=$?
+          set -e
+          test "$status" -eq 0 || fail_aws "foundation_models_list_failed"
+
+          set +e
+          aws bedrock get-foundation-model --model-identifier "$MODEL_ID" --no-cli-pager --region "$SOURCE_REGION" --output json > "$raw_dir/model.json" 2> "$raw_dir/model.stderr"
+          status=$?
+          set -e
+          test "$status" -eq 0 || fail_aws "foundation_model_get_failed"
+
+          set +e
+          aws bedrock list-inference-profiles --type-equals SYSTEM_DEFINED --no-cli-pager --region "$SOURCE_REGION" --output json > "$raw_dir/profiles.json" 2> "$raw_dir/profiles.stderr"
+          status=$?
+          set -e
+          test "$status" -eq 0 || fail_aws "inference_profiles_list_failed"
+
+          set +e
+          aws bedrock get-inference-profile --inference-profile-identifier "$INFERENCE_PROFILE_ID" --no-cli-pager --region "$SOURCE_REGION" --output json > "$raw_dir/profile.json" 2> "$raw_dir/profile.stderr"
+          status=$?
+          set -e
+          test "$status" -eq 0 || fail_aws "inference_profile_get_failed"
 
           python3 - "$raw_dir" "$candidate" <<'PY'
           import datetime

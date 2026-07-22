@@ -149,8 +149,8 @@ def test_intact_copy_passes(repository: Path):
         ),
         ("aws-region: eu-west-1", "aws-region: us-east-1", "exact AWS region"),
         ("set +x", "set -x", "shell tracing disabled"),
-        ("trap cleanup EXIT INT TERM", "true", "raw temporary cleanup trap"),
-        ('rm -rf "$raw_dir" "$candidate"', "true", "raw temporary cleanup"),
+        ("trap cleanup EXIT", "true", "raw temporary cleanup trap"),
+        ('rm -rf "$work_dir"', "true", "raw temporary cleanup"),
         (
             "python3 scripts/sanitize_bedrock_preflight.py",
             "python3 -m json.tool",
@@ -176,43 +176,63 @@ def test_intact_copy_passes(repository: Path):
         (
             "aws sts get-caller-identity",
             "aws iam list-roles",
-            "exact read-only AWS commands",
+            "(?:exact read-only AWS commands|dynamic AWS command is forbidden)",
         ),
         (
             "aws bedrock list-foundation-models",
             "aws bedrock-runtime invoke-model",
-            "exact read-only AWS commands",
+            "(?:exact read-only AWS commands|dynamic AWS command is forbidden)",
         ),
         (
             "aws bedrock get-foundation-model",
             "aws bedrock converse",
-            "exact read-only AWS commands",
+            "(?:exact read-only AWS commands|dynamic AWS command is forbidden)",
         ),
         (
             "aws bedrock list-inference-profiles",
             "aws organizations list-accounts",
-            "exact read-only AWS commands",
+            "(?:exact read-only AWS commands|dynamic AWS command is forbidden)",
         ),
         (
             "aws bedrock get-inference-profile",
             "aws bedrock delete-inference-profile",
-            "exact read-only AWS commands",
+            "(?:exact read-only AWS commands|dynamic AWS command is forbidden)",
         ),
-        (' > "$raw_dir/identity.json"', "", "raw AWS output redirected"),
+        (
+            ' > "$raw_dir/identity.json"',
+            "",
+            "raw AWS stdout and stderr redirected",
+        ),
         (
             ' --output json > "$raw_dir/models.json"',
             ' > "$raw_dir/models.json"',
-            "raw AWS output redirected",
+            "raw AWS stdout and stderr redirected",
         ),
-        ("set -eu", "printenv\n          set -eu", "no environment dump"),
-        ("set -eu", "env\n          set -eu", "no environment dump"),
-        ("set -eu", "tee raw.json\n          set -eu", "no raw tee"),
         (
-            "set -eu",
-            "echo data >> $GITHUB_STEP_SUMMARY\n          set -eu",
+            "set -euo pipefail",
+            "printenv\n          set -euo pipefail",
+            "no environment dump",
+        ),
+        (
+            "set -euo pipefail",
+            "env\n          set -euo pipefail",
+            "no environment dump",
+        ),
+        (
+            "set -euo pipefail",
+            "tee raw.json\n          set -euo pipefail",
+            "no raw tee",
+        ),
+        (
+            "set -euo pipefail",
+            "echo data >> $GITHUB_STEP_SUMMARY\n          set -euo pipefail",
             "no step summary evidence",
         ),
-        ("set -eu", "export AWS_DEBUG=1\n          set -eu", "debug disabled"),
+        (
+            "set -euo pipefail",
+            "export AWS_DEBUG=1\n          set -euo pipefail",
+            "debug disabled",
+        ),
         (
             "unset-current-credentials: true",
             "aws-access-key-id: example\n          aws-secret-access-key: example",
@@ -228,10 +248,14 @@ def test_intact_copy_passes(repository: Path):
             "arn:aws:iam::" + "0" * 12 + ":role/example",
             "(?:Environment role secret|no hardcoded ARN)",
         ),
-        ("set -eu", "echo " + "0" * 12 + "\n          set -eu", "no account ID"),
         (
-            "set -eu",
-            "echo " + "AKIA" + "ABCDEFGHIJKLMNOP\n          set -eu",
+            "set -euo pipefail",
+            "echo " + "0" * 12 + "\n          set -euo pipefail",
+            "no account ID",
+        ),
+        (
+            "set -euo pipefail",
+            "echo " + "AKIA" + "ABCDEFGHIJKLMNOP\n          set -euo pipefail",
             "no static access key",
         ),
     ],
@@ -532,3 +556,195 @@ def test_mutations_do_not_touch_checkout(repository: Path):
     write(repository, FILES[1], data)
     rejected(repository, "preflight enabled")
     assert (ROOT / FILES[1]).read_bytes() == original
+
+
+DYNAMIC_SHELL_CASES = (
+    ('eval "true"', "dynamic shell execution is forbidden"),
+    ('command eval "true"', "dynamic shell execution is forbidden"),
+    ('builtin eval "true"', "dynamic shell execution is forbidden"),
+    ('bash -c "true"', "dynamic shell execution is forbidden"),
+    ('sh -c "true"', "dynamic shell execution is forbidden"),
+    ("source script.sh", "dynamic shell execution is forbidden"),
+    (". script.sh", "dynamic shell execution is forbidden"),
+    ("alias awsx=aws", "dynamic AWS command is forbidden"),
+    ('run_aws() { aws "$@"; }', "dynamic AWS command is forbidden"),
+    ('$(printf true)', "dynamic shell execution is forbidden"),
+    ('parts=(aws iam list-roles)', "dynamic AWS command is forbidden"),
+    ('bash <<EOF', "dynamic shell execution is forbidden"),
+)
+
+
+@pytest.mark.parametrize(("fragment", "control"), DYNAMIC_SHELL_CASES)
+def test_dynamic_shell_is_rejected(
+    repository: Path, fragment: str, control: str
+) -> None:
+    anchor = "          set +e\n          aws sts get-caller-identity"
+    replacement = f"          {fragment}\n{anchor}"
+    replace(repository, FILES[0], anchor, replacement)
+    rejected(repository, control)
+
+
+DYNAMIC_AWS_CASES = (
+    ('service=iam\n          aws "$service" list-roles',),
+    ('operation=list-roles\n          aws iam "$operation"',),
+    ('aws_cmd=aws\n          "$aws_cmd" iam list-roles',),
+    ('service=sts\n          aws "$service" get-caller-identity',),
+    ('operation=get-caller-identity\n          aws sts "$operation"',),
+    ('aws "$(printf iam)" list-roles',),
+    ('aws iam "$(printf list-roles)"',),
+    ('parts=(aws iam list-roles)\n          "${parts[@]}"',),
+    ('run_aws() { aws "$@"; }\n          run_aws iam list-roles',),
+    ('alias awsx=aws\n          awsx iam list-roles',),
+    ('name=aws_cmd\n          aws_cmd=aws\n          "${!name}" iam list-roles',),
+    ('args="iam list-roles"\n          aws $args',),
+    ('service=bedrock\n          aws "$service" list-foundation-models',),
+    ('operation=list-foundation-models\n          aws bedrock "$operation"',),
+)
+
+
+@pytest.mark.parametrize("lines", DYNAMIC_AWS_CASES)
+def test_dynamic_aws_commands_are_rejected(repository: Path, lines: tuple[str]) -> None:
+    fragment = lines[0]
+    anchor = "          set +e\n          aws sts get-caller-identity"
+    replacement = f"          {fragment}\n{anchor}"
+    replace(repository, FILES[0], anchor, replacement)
+    rejected(repository, "dynamic AWS command is forbidden")
+
+
+STDERR_MUTATIONS = (
+    (' 2> "$raw_dir/identity.stderr"', "", "raw AWS stdout and stderr redirected"),
+    (
+        ' 2> "$raw_dir/identity.stderr"',
+        " 2>&1",
+        "raw AWS stdout and stderr redirected",
+    ),
+    (
+        ' 2> "$raw_dir/identity.stderr"',
+        " 2> /dev/stderr",
+        "raw AWS stdout and stderr redirected",
+    ),
+    (
+        ' 2> "$raw_dir/identity.stderr"',
+        " 2> >(tee error.log)",
+        "raw AWS stdout and stderr redirected",
+    ),
+    (
+        ' 2> "$raw_dir/identity.stderr"',
+        " 2> $GITHUB_OUTPUT",
+        "no GitHub output evidence",
+    ),
+    (
+        ' 2> "$raw_dir/identity.stderr"',
+        " 2> $GITHUB_ENV",
+        "no GitHub environment evidence",
+    ),
+    (
+        ' 2> "$raw_dir/identity.stderr"',
+        " 2> $GITHUB_STEP_SUMMARY",
+        "no step summary evidence",
+    ),
+    (
+        "path: bedrock-preflight-evidence.json",
+        "path: ${{ runner.temp }}",
+        "sanitized artifact only",
+    ),
+    (
+        "          python3 scripts/sanitize_bedrock_preflight.py",
+        '          cp "$raw_dir/identity.stderr" "$output"\n          python3 scripts/sanitize_bedrock_preflight.py',
+        "exact raw error files",
+    ),
+    (
+        'fail_aws "identity_check_failed"',
+        "fail_aws",
+        "fixed AWS error categories",
+    ),
+    (
+        'fail_aws "identity_check_failed"',
+        'fail_aws "$error"',
+        "fixed AWS error categories",
+    ),
+    (
+        'rm -rf "$work_dir"',
+        'rm -rf "$raw_dir"',
+        "raw temporary cleanup",
+    ),
+    ("trap cleanup EXIT", "trap true EXIT", "raw temporary cleanup trap"),
+    (
+        'test "$status" -eq 0 || fail_aws "identity_check_failed"',
+        'test "$status" -eq 0 || cat "$raw_dir/identity.stderr"',
+        "no raw error output",
+    ),
+    (
+        'fail_aws() { printf \'%s\\n\' "$1" >&2; exit 1; }',
+        'fail_aws() { cat "$raw_dir/identity.stderr"; exit 1; }',
+        "(?:no raw error output|sanitized AWS error handler)",
+    ),
+)
+
+
+@pytest.mark.parametrize(("old", "new", "control"), STDERR_MUTATIONS)
+def test_stderr_controls_are_fail_closed(
+    repository: Path, old: str, new: str, control: str
+) -> None:
+    replace(repository, FILES[0], old, new)
+    rejected(repository, control)
+
+
+STATIC_SHELL_MUTATIONS = (
+    ("set -euo pipefail", "set -eu", "strict shell mode"),
+    ("umask 077", "umask 022", "private temporary permissions"),
+    (
+        'mktemp -d "${RUNNER_TEMP}/bedrock-preflight.XXXXXX"',
+        '"${RUNNER_TEMP}/bedrock-preflight"',
+        "secure temporary directory",
+    ),
+    ("set +x", "set -x", "shell tracing disabled"),
+    ("set +x", "printenv\n          set +x", "no environment dump"),
+    ("set +x", "env\n          set +x", "no environment dump"),
+    ("set +x", "tee error.log\n          set +x", "no raw tee"),
+    ("set +x", "cat raw.stderr\n          set +x", "no raw error output"),
+    ("--output json", "--debug --output json", "debug disabled"),
+    (
+        "--output json",
+        "--endpoint-url https://example.com --output json",
+        "AWS endpoint and TLS controls",
+    ),
+)
+
+
+@pytest.mark.parametrize(("old", "new", "control"), STATIC_SHELL_MUTATIONS)
+def test_static_shell_controls_are_enforced(
+    repository: Path, old: str, new: str, control: str
+) -> None:
+    replace(repository, FILES[0], old, new)
+    rejected(repository, control)
+
+
+CATEGORY_MUTATIONS = tuple(
+    (category, f"changed_{category}", "fixed AWS error categories")
+    for category in (
+        "identity_check_failed",
+        "foundation_models_list_failed",
+        "foundation_model_get_failed",
+        "inference_profiles_list_failed",
+        "inference_profile_get_failed",
+    )
+)
+
+
+def test_error_handler_is_fixed(repository: Path) -> None:
+    replace(
+        repository,
+        FILES[0],
+        'fail_aws() { printf \'%s\\n\' "$1" >&2; exit 1; }',
+        'fail_aws() { printf "$1" >&2; exit 1; }',
+    )
+    rejected(repository, "sanitized AWS error handler")
+
+
+@pytest.mark.parametrize(("old", "new", "control"), CATEGORY_MUTATIONS)
+def test_error_categories_and_handler_are_fixed(
+    repository: Path, old: str, new: str, control: str
+) -> None:
+    replace(repository, FILES[0], old, new)
+    rejected(repository, control)

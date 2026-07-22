@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shlex
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -60,6 +61,13 @@ ALLOWED_AWS_COMMANDS = {
     "aws bedrock list-foundation-models",
     "aws bedrock list-inference-profiles",
     "aws sts get-caller-identity",
+}
+ERROR_CATEGORIES = {
+    "identity_check_failed",
+    "foundation_models_list_failed",
+    "foundation_model_get_failed",
+    "inference_profiles_list_failed",
+    "inference_profile_get_failed",
 }
 OFFICIAL_HOSTS = {"docs.aws.amazon.com", "aws.amazon.com", "docs.github.com"}
 
@@ -132,6 +140,85 @@ def mapping_keys(block: str, indent: int) -> set[str]:
             if match:
                 result.add(match.group(1))
     return result
+
+
+def shell_lines(workflow: str) -> list[str]:
+    lines: list[str] = []
+    in_run = False
+    run_indent = 0
+    heredoc_end: str | None = None
+    for raw in workflow.splitlines():
+        indent = len(raw) - len(raw.lstrip(" "))
+        if not in_run:
+            match = re.match(r"^(\s*)run:\s*\|\s*$", raw)
+            if match:
+                in_run = True
+                run_indent = len(match.group(1))
+            continue
+        if raw.strip() and indent <= run_indent:
+            in_run = False
+            heredoc_end = None
+            continue
+        line = raw[run_indent + 2 :] if len(raw) >= run_indent + 2 else ""
+        if heredoc_end is not None:
+            if line.strip() == heredoc_end:
+                heredoc_end = None
+            continue
+        heredoc = re.search(r"<<-?['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?", line)
+        if heredoc:
+            heredoc_end = heredoc.group(1)
+        lines.append(line)
+    return lines
+
+
+def shell_tokens(line: str) -> list[str]:
+    try:
+        return shlex.split(line, comments=True, posix=True)
+    except ValueError:
+        fail("valid static shell syntax")
+
+
+def validate_static_shell(workflow: str) -> None:
+    lines = shell_lines(workflow)
+    commands: list[str] = []
+    for line in lines:
+        tokens = shell_tokens(line)
+        if not tokens:
+            continue
+        executable = tokens
+        if executable[:1] == ["!"]:
+            executable = executable[1:]
+        if (
+            executable[:1] in (["eval"], ["source"], ["."])
+            or executable[:2] in (["command", "eval"], ["builtin", "eval"])
+            or (executable[:1] in (["bash"], ["sh"]) and "-c" in executable[1:])
+            or (executable[:1] in (["bash"], ["sh"]) and "<<" in line)
+        ):
+            fail("dynamic shell execution is forbidden")
+        if re.match(r"^\s*alias(?:\s|$)", line) or re.match(
+            r"^\s*(?:function\s+)?[A-Za-z_][A-Za-z0-9_]*\s*\(\)\s*\{", line
+        ) and re.search(r"\baws\b", line):
+            fail("dynamic AWS command is forbidden")
+        if re.match(r"^\s*\$\(", line):
+            fail("dynamic shell execution is forbidden")
+        if re.match(r"^\s*[A-Za-z_][A-Za-z0-9_]*=\([^)]*\baws\b", line):
+            fail("dynamic AWS command is forbidden")
+        if re.match(r'^\s*["\']?\$\{?[!A-Za-z_]', line):
+            fail("dynamic AWS command is forbidden")
+        aws_match = re.match(
+            r"^\s*aws\s+(sts\s+get-caller-identity|bedrock\s+(?:list-foundation-models|get-foundation-model|list-inference-profiles|get-inference-profile))\b",
+            line,
+        )
+        if re.search(r"(?:^|[;&|!]\s*)aws(?:\s|$)", line):
+            if aws_match is None or "$(" in line or "`" in line:
+                fail("dynamic AWS command is forbidden")
+            commands.append("aws " + re.sub(r"\s+", " ", aws_match.group(1)))
+        elif re.search(r"\baws\b", line) and (
+            "$" in line or "(" in line or re.match(r"^\s*[A-Za-z_].*\{", line)
+        ):
+            fail("dynamic AWS command is forbidden")
+    require(set(commands) == ALLOWED_AWS_COMMANDS, "exact read-only AWS commands")
+    require(len(commands) == len(ALLOWED_AWS_COMMANDS), "exact read-only AWS commands")
 
 
 def validate_workflow(workflow: str) -> None:
@@ -224,28 +311,37 @@ def validate_workflow(workflow: str) -> None:
             f'test "${variable}" = "{value}"' in workflow,
             f"closed validation {variable}",
         )
+    require("set -euo pipefail" in workflow, "strict shell mode")
     require("set +x" in workflow and "set -x" not in workflow, "shell tracing disabled")
-    require("trap cleanup EXIT INT TERM" in workflow, "raw temporary cleanup trap")
-    require('rm -rf "$raw_dir" "$candidate"' in workflow, "raw temporary cleanup")
+    require("umask 077" in workflow, "private temporary permissions")
+    require('mktemp -d "${RUNNER_TEMP}/bedrock-preflight.XXXXXX"' in workflow, "secure temporary directory")
+    require("trap cleanup EXIT" in workflow, "raw temporary cleanup trap")
+    require('rm -rf "$work_dir"' in workflow, "raw temporary cleanup")
     require("scripts/sanitize_bedrock_preflight.py" in workflow, "sanitizer invocation")
     require("$GITHUB_STEP_SUMMARY" not in workflow, "no step summary evidence")
+    require("$GITHUB_OUTPUT" not in workflow, "no GitHub output evidence")
+    require("$GITHUB_ENV" not in workflow, "no GitHub environment evidence")
     require(
         not re.search(r"(?m)^\s*(?:env|printenv)(?:\s|$)", workflow),
         "no environment dump",
     )
     require(not re.search(r"(?m)^\s*tee(?:\s|$)", workflow), "no raw tee")
     require(
+        not re.search(r"(?m)\bcat\s+.*(?:stderr|raw_dir)", workflow),
+        "no raw error output",
+    )
+    require(
         "--debug" not in workflow
         and "AWS_DEBUG" not in workflow
         and "ACTIONS_STEP_DEBUG" not in workflow,
         "debug disabled",
     )
-
-    commands = set(
-        re.findall(r"(?m)^\s*(aws (?:sts|bedrock)[a-z0-9 -]+?)(?= --)", workflow)
+    require(
+        "--endpoint-url" not in workflow and "--no-verify-ssl" not in workflow,
+        "AWS endpoint and TLS controls",
     )
-    commands = {re.sub(r"\s+", " ", command).strip() for command in commands}
-    require(commands == ALLOWED_AWS_COMMANDS, "exact read-only AWS commands")
+
+    validate_static_shell(workflow)
     forbidden = (
         "bedrock-runtime",
         "invoke-model",
@@ -271,9 +367,24 @@ def validate_workflow(workflow: str) -> None:
     )
     for command_line in re.findall(r"(?m)^\s*aws .*?$", workflow):
         require(
-            ">" in command_line and "--output json" in command_line,
-            "raw AWS output redirected",
+            re.search(r'>\s*"\$raw_dir/[a-z_]+\.json"', command_line) is not None
+            and re.search(r'2>\s*"\$raw_dir/[a-z_]+\.stderr"', command_line) is not None
+            and "--output json" in command_line,
+            "raw AWS stdout and stderr redirected",
         )
+    require(workflow.count(".stderr") == 5, "exact raw error files")
+    require(
+        all(f'fail_aws "{category}"' in workflow for category in ERROR_CATEGORIES),
+        "fixed AWS error categories",
+    )
+    require(
+        len(re.findall(r'fail_aws "[a-z_]+"', workflow)) == len(ERROR_CATEGORIES),
+        "fixed AWS error categories",
+    )
+    require(
+        'fail_aws() { printf \'%s\\n\' "$1" >&2; exit 1; }' in workflow,
+        "sanitized AWS error handler",
+    )
     upload_steps = re.findall(r"actions/upload-artifact@[^\s]+", workflow)
     require(upload_steps == ["actions/upload-artifact@v4"], "single artifact upload")
     require(
