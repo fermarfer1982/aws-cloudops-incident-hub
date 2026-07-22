@@ -13,7 +13,10 @@ La referencia continúa validada únicamente como laboratorio y no está prepara
 para producción. La [selección reversible de modelo y región](bedrock-model-selection.md)
 propone, sin activar, Nova Lite mediante Converse y un perfil geográfico UE. Sigue
 siendo **NO-GO PARA INFERENCIA BEDROCK REAL**, sin IAM ni acceso de cuenta verificado,
-y no cambia el estado Proposed de ADR-013.
+y no cambia el estado Proposed de ADR-013. El
+[diseño de acceso e IAM de mínimo privilegio](bedrock-access-and-iam-design.md)
+define únicamente una verificación futura y una plantilla deliberadamente inerte;
+no aplica permisos ni comprueba la cuenta.
 
 ## Implementation status
 

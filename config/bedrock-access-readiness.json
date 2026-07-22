@@ -1,0 +1,164 @@
+{
+  "account_access_checked": false,
+  "account_access_verified": false,
+  "api": "Converse",
+  "blockers": [
+    "destination regions must be revalidated",
+    "SCP compatibility has not been checked",
+    "account access has not been checked",
+    "applicable terms have not been reviewed",
+    "IAM has not been rendered, reviewed, or applied",
+    "human execution approval has not been granted"
+  ],
+  "destination_regions_snapshot": [
+    "eu-central-1",
+    "eu-north-1",
+    "eu-west-1",
+    "eu-west-3"
+  ],
+  "destination_regions_verified_for_execution": false,
+  "enabled": false,
+  "human_execution_approval": false,
+  "iam_policy_applied": false,
+  "inference_authorized": false,
+  "inference_profile_id": "eu.amazon.nova-lite-v1:0",
+  "model_id": "amazon.nova-lite-v1:0",
+  "policy_version": "bedrock-access-readiness/v1",
+  "readiness_checklist": [
+    {
+      "completed": false,
+      "evidence": null,
+      "id": "source_region_enabled_checked",
+      "verified_at": null
+    },
+    {
+      "completed": false,
+      "evidence": null,
+      "id": "official_destinations_revalidated",
+      "verified_at": null
+    },
+    {
+      "completed": false,
+      "evidence": null,
+      "id": "catalog_presence_checked",
+      "verified_at": null
+    },
+    {
+      "completed": false,
+      "evidence": null,
+      "id": "regional_availability_checked",
+      "verified_at": null
+    },
+    {
+      "completed": false,
+      "evidence": null,
+      "id": "runtime_identity_selected",
+      "verified_at": null
+    },
+    {
+      "completed": false,
+      "evidence": null,
+      "id": "runtime_identity_validated",
+      "verified_at": null
+    },
+    {
+      "completed": false,
+      "evidence": null,
+      "id": "rendered_policy_reviewed",
+      "verified_at": null
+    },
+    {
+      "completed": false,
+      "evidence": null,
+      "id": "iam_policy_applied",
+      "verified_at": null
+    },
+    {
+      "completed": false,
+      "evidence": null,
+      "id": "scp_compatibility_checked",
+      "verified_at": null
+    },
+    {
+      "completed": false,
+      "evidence": null,
+      "id": "destination_regions_authorized",
+      "verified_at": null
+    },
+    {
+      "completed": false,
+      "evidence": null,
+      "id": "account_access_checked",
+      "verified_at": null
+    },
+    {
+      "completed": false,
+      "evidence": null,
+      "id": "account_access_verified",
+      "verified_at": null
+    },
+    {
+      "completed": false,
+      "evidence": null,
+      "id": "terms_reviewed",
+      "verified_at": null
+    },
+    {
+      "completed": false,
+      "evidence": null,
+      "id": "non_inference_precheck_completed",
+      "verified_at": null
+    },
+    {
+      "completed": false,
+      "evidence": null,
+      "id": "human_execution_approval",
+      "verified_at": null
+    },
+    {
+      "completed": false,
+      "evidence": null,
+      "id": "inference_authorized",
+      "verified_at": null
+    }
+  ],
+  "required_invoke_action": "bedrock:InvokeModel",
+  "review_required_before_execution": true,
+  "scp_compatibility_checked": false,
+  "source_region": "eu-west-1",
+  "sources": [
+    {
+      "interpretation": "Converse non-streaming is authorized by bedrock:InvokeModel; catalog metadata is not invocation evidence.",
+      "uncertainty": "Effective account authorization remains unknown until a future account-scoped check.",
+      "url": "https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html",
+      "verified_at": "2026-07-22T06:10:17Z"
+    },
+    {
+      "interpretation": "The EU profile called from eu-west-1 has exactly four documented destinations in this snapshot.",
+      "uncertainty": "The snapshot must be revalidated before IAM is rendered or execution is authorized.",
+      "url": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-lite.html",
+      "verified_at": "2026-07-22T06:10:17Z"
+    },
+    {
+      "interpretation": "InvokeModel supports inference-profile and foundation-model resources and bedrock:InferenceProfileArn.",
+      "uncertainty": "Identity policies and organization controls in the future account have not been inspected.",
+      "url": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonbedrock.html",
+      "verified_at": "2026-07-22T06:10:17Z"
+    },
+    {
+      "interpretation": "A cross-Region request fails when an SCP blocks any destination in its profile.",
+      "uncertainty": "SCP and Region restrictions for the future account have not been checked.",
+      "url": "https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html",
+      "verified_at": "2026-07-22T06:10:17Z"
+    },
+    {
+      "interpretation": "Amazon models have no AWS Marketplace product ID; general access defaults do not prove effective account access.",
+      "uncertainty": "Console state, permissions, terms, quotas, and effective invocation have not been checked.",
+      "url": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html",
+      "verified_at": "2026-07-22T06:10:17Z"
+    }
+  ],
+  "status": "proposed-disabled",
+  "streaming_action_allowed": false,
+  "terms_reviewed": false
+}

@@ -45,6 +45,7 @@ Este backlog convierte los hallazgos de `docs/well-architected-review.md` en acc
 | WA-028 | P3 | Security | Diseñar cuenta central de seguridad | CloudTrail, GuardDuty, Security Hub y agregación organizativa | Arquitectura multi-account | Pendiente |
 | WA-029 | P3 | Cost optimization | Inventariar recursos huérfanos | Automatización o consulta periódica fuera del stack | Uso recurrente del laboratorio | Pendiente |
 | WA-030 | P3 | Sustainability | Evaluar región con criterios múltiples | Decisión que combine latencia, regulación, resiliencia y sostenibilidad | Requisitos de negocio | Pendiente |
+| WA-031 | P1 | Security | Verificar acceso Bedrock y aplicar IAM mínimo | Acceso de cuenta, destinos, SCP, términos e identidad comprobados; política exacta revisada antes de una autorización humana separada | WA-021 y selección reversible | Diseño y guardrail completados; plantilla inerte, IAM no aplicado, acceso no comprobado e inferencia no autorizada |
 
 ## Riesgos aceptados en el laboratorio
 
