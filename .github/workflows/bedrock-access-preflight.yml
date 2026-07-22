@@ -1,0 +1,185 @@
+name: Bedrock access preflight
+
+run-name: Bedrock access preflight by ${{ github.actor }} (#${{ github.run_number }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_no_inference:
+        description: Confirm that no inference will be executed
+        required: true
+        type: boolean
+      confirm_read_only:
+        description: Confirm that all AWS operations are read-only
+        required: true
+        type: boolean
+      confirm_synthetic_lab:
+        description: Confirm validated laboratory scope only
+        required: true
+        type: boolean
+      source_region:
+        description: Exact approved source Region
+        required: true
+        default: eu-west-1
+        type: string
+      model_id:
+        description: Exact proposed model ID
+        required: true
+        default: amazon.nova-lite-v1:0
+        type: string
+      inference_profile_id:
+        description: Exact proposed geographic profile ID
+        required: true
+        default: eu.amazon.nova-lite-v1:0
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  preflight:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: bedrock-access-preflight
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out the approved revision
+        uses: actions/checkout@v7
+
+      - name: Validate closed inputs and disabled configuration
+        env:
+          CONFIRM_NO_INFERENCE: ${{ inputs.confirm_no_inference }}
+          CONFIRM_READ_ONLY: ${{ inputs.confirm_read_only }}
+          CONFIRM_SYNTHETIC_LAB: ${{ inputs.confirm_synthetic_lab }}
+          SOURCE_REGION: ${{ inputs.source_region }}
+          MODEL_ID: ${{ inputs.model_id }}
+          INFERENCE_PROFILE_ID: ${{ inputs.inference_profile_id }}
+          PREFLIGHT_ROLE_ARN: ${{ secrets.AWS_BEDROCK_PREFLIGHT_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          set +x
+          test "$CONFIRM_NO_INFERENCE" = "true"
+          test "$CONFIRM_READ_ONLY" = "true"
+          test "$CONFIRM_SYNTHETIC_LAB" = "true"
+          test "$SOURCE_REGION" = "eu-west-1"
+          test "$MODEL_ID" = "amazon.nova-lite-v1:0"
+          test "$INFERENCE_PROFILE_ID" = "eu.amazon.nova-lite-v1:0"
+          test -n "$PREFLIGHT_ROLE_ARN"
+          python3 scripts/check_bedrock_access_preflight.py
+
+      - name: Configure temporary read-only AWS credentials through OIDC
+        uses: aws-actions/configure-aws-credentials@v6.2.2
+        with:
+          role-to-assume: ${{ secrets.AWS_BEDROCK_PREFLIGHT_ROLE_ARN }}
+          aws-region: eu-west-1
+          role-session-name: BedrockAccessPreflight
+          role-duration-seconds: 900
+          mask-aws-account-id: true
+          unset-current-credentials: true
+
+      - name: Collect and sanitize read-only evidence
+        env:
+          SOURCE_REGION: ${{ inputs.source_region }}
+          MODEL_ID: ${{ inputs.model_id }}
+          INFERENCE_PROFILE_ID: ${{ inputs.inference_profile_id }}
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          work_dir="$(mktemp -d "${RUNNER_TEMP}/bedrock-preflight.XXXXXX")"
+          raw_dir="${work_dir}/raw"
+          candidate="${work_dir}/candidate.json"
+          output="${GITHUB_WORKSPACE}/bedrock-preflight-evidence.json"
+          cleanup() { rm -rf "$work_dir"; }
+          fail_aws() { printf '%s\n' "$1" >&2; exit 1; }
+          trap cleanup EXIT
+          mkdir -p "$raw_dir"
+
+          set +e
+          aws sts get-caller-identity --no-cli-pager --output json > "$raw_dir/identity.json" 2> "$raw_dir/identity.stderr"
+          status=$?
+          set -e
+          test "$status" -eq 0 || fail_aws "identity_check_failed"
+
+          set +e
+          aws bedrock list-foundation-models --region eu-west-1 --no-cli-pager --output json > "$raw_dir/models.json" 2> "$raw_dir/models.stderr"
+          status=$?
+          set -e
+          test "$status" -eq 0 || fail_aws "foundation_models_list_failed"
+
+          set +e
+          aws bedrock get-foundation-model --model-identifier amazon.nova-lite-v1:0 --region eu-west-1 --no-cli-pager --output json > "$raw_dir/model.json" 2> "$raw_dir/model.stderr"
+          status=$?
+          set -e
+          test "$status" -eq 0 || fail_aws "foundation_model_get_failed"
+
+          set +e
+          aws bedrock list-inference-profiles --region eu-west-1 --no-cli-pager --output json > "$raw_dir/profiles.json" 2> "$raw_dir/profiles.stderr"
+          status=$?
+          set -e
+          test "$status" -eq 0 || fail_aws "inference_profiles_list_failed"
+
+          set +e
+          aws bedrock get-inference-profile --inference-profile-identifier eu.amazon.nova-lite-v1:0 --region eu-west-1 --no-cli-pager --output json > "$raw_dir/profile.json" 2> "$raw_dir/profile.stderr"
+          status=$?
+          set -e
+          test "$status" -eq 0 || fail_aws "inference_profile_get_failed"
+
+          python3 - "$raw_dir" "$candidate" <<'PY'
+          import datetime
+          import json
+          import os
+          import pathlib
+          import sys
+
+          raw = pathlib.Path(sys.argv[1])
+          identity = json.loads((raw / "identity.json").read_text())
+          models = json.loads((raw / "models.json").read_text())
+          model = json.loads((raw / "model.json").read_text())
+          profiles = json.loads((raw / "profiles.json").read_text())
+          profile = json.loads((raw / "profile.json").read_text())
+          model_id = os.environ["MODEL_ID"]
+          profile_id = os.environ["INFERENCE_PROFILE_ID"]
+          checks = {
+              "catalog_model_present": any(item.get("modelId") == model_id for item in models.get("modelSummaries", [])),
+              "foundation_model_details_present": model.get("modelDetails", {}).get("modelId") == model_id,
+              "identity_present": all(identity.get(key) for key in ("Account", "Arn", "UserId")),
+              "inference_executed": None,
+              "inference_profile_present": profile.get("inferenceProfileId") == profile_id and any(item.get("inferenceProfileId") == profile_id for item in profiles.get("inferenceProfileSummaries", [])),
+              "oidc_authentication_succeeded": True,
+              "read_permissions_compatible": True,
+              "source_region_exact": os.environ["SOURCE_REGION"] == "eu-west-1",
+          }
+          evidence = {
+              "schema_version": "bedrock-access-preflight/v1",
+              "generated_at": datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "commit_sha": os.environ["GITHUB_SHA"],
+              "source_region": os.environ["SOURCE_REGION"],
+              "model_id": model_id,
+              "inference_profile_id": profile_id,
+              "checks": [
+                  {"name": name, "status": "NOT_CHECKED" if value is None else ("PASS" if value else "FAIL")}
+                  for name, value in sorted(checks.items())
+              ],
+              "official_sources": [
+                  "https://docs.aws.amazon.com/bedrock/latest/userguide/models-get-info.html",
+                  "https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-view.html",
+                  "https://docs.aws.amazon.com/cli/latest/reference/sts/get-caller-identity.html",
+                  "https://docs.github.com/en/actions/reference/security/oidc",
+              ],
+              "tool_version": "1.0.0",
+          }
+          pathlib.Path(sys.argv[2]).write_text(json.dumps(evidence))
+          PY
+          python3 scripts/sanitize_bedrock_preflight.py --input "$candidate" --output "$output"
+          test "$(find "$GITHUB_WORKSPACE" -maxdepth 1 -name 'bedrock-preflight-evidence*.json' -type f | wc -l)" -eq 1
+
+      - name: Upload sanitized preflight evidence only
+        uses: actions/upload-artifact@v4
+        with:
+          name: bedrock-access-preflight-evidence
+          path: bedrock-preflight-evidence.json
+          if-no-files-found: error
+          retention-days: 7

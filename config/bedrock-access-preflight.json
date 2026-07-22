@@ -1,0 +1,21 @@
+{
+  "account_checked": false,
+  "artifact_contains_identifiers": false,
+  "availability_checked": false,
+  "catalog_checked": false,
+  "enabled": false,
+  "environment_configured": false,
+  "execution_authorized": false,
+  "inference_authorized": false,
+  "inference_profile_checked": false,
+  "inference_profile_id": "eu.amazon.nova-lite-v1:0",
+  "inference_tested": false,
+  "iam_runtime_checked": false,
+  "logs_contain_identifiers": false,
+  "model_id": "amazon.nova-lite-v1:0",
+  "oidc_role_configured": false,
+  "retention_days": 7,
+  "source_region": "eu-west-1",
+  "status": "proposed-disabled",
+  "workflow_enabled": false
+}
