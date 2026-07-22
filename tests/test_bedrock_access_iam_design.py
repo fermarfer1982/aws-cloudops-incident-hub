@@ -335,6 +335,79 @@ def test_legitimate_prohibitions_are_accepted(repository: Path, claim: str):
 
 
 @pytest.mark.parametrize(
+    "claim",
+    [
+        "US está prohibido; no obstante, el perfil UE podrá usarse como contingencia.",
+        "El perfil APAC no está autorizado, pero el perfil UE sí está permitido.",
+        "Global permanece prohibido; sin embargo, EU puede utilizarse.",
+        "Estados Unidos no está permitido, aunque la geografía UE queda aprobada.",
+        "El perfil estadounidense está prohibido; el perfil europeo puede usarse.",
+        "US y APAC están prohibidos; solo UE está permitido.",
+        "Global, US y APAC permanecen bloqueados, pero el perfil UE puede invocarse.",
+        "US está prohibido;\r\nno obstante, el perfil UE podrá usarse como contingencia.",
+        "- US está prohibido; no obstante, el perfil UE podrá usarse como contingencia.",
+        "| US está prohibido | no obstante, el perfil UE podrá usarse como contingencia |",
+        "  us   ESTÁ   PROHIBIDO ; NO OBSTANTE, EL PERFIL ue PODRÁ USARSE COMO CONTINGENCIA. ",
+        "US está prohibido\nel perfil UE está permitido.",
+    ],
+)
+def test_explicit_eu_authorization_after_non_eu_prohibition_passes(
+    repository: Path, claim: str
+):
+    append_doc(repository, "\n" + claim + "\n")
+    assert claim.encode() in (repository / FILES[2]).read_bytes()
+    run_guardrail(repository)
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "US está prohibido; no obstante, podrá usarse como contingencia.",
+        "El perfil US no está permitido, pero queda autorizado para emergencias.",
+        "APAC está bloqueado; sin embargo, puede utilizarse.",
+        "Global está prohibido, aunque queda permitido como fallback.",
+        "US no está autorizado; el mismo perfil podrá usarse temporalmente.",
+        "El perfil estadounidense está prohibido, pero podrá invocarse.",
+        "Estados Unidos no está permitido; no obstante, se autoriza su uso.",
+        "APAC no está autorizado; Asia-Pacífico podrá utilizarse.",
+        "Global, US y APAC están prohibidos; sin embargo, cualquiera de ellos puede usarse.",
+        "US está prohibido; no obstante, el perfil US podrá usarse como contingencia.",
+        "US está prohibido.\nEl perfil US está permitido.",
+        "- US está prohibido.\n- El perfil US está permitido.",
+        "| US | prohibido |\n| perfil US | permitido |",
+        "US está prohibido;\r\nno obstante, podrá usarse como contingencia.",
+        "  us   ESTÁ   PROHIBIDO ; NO OBSTANTE, PODRÁ USARSE COMO CONTINGENCIA. ",
+    ],
+)
+def test_non_eu_authorization_after_prohibition_is_rejected(
+    repository: Path, claim: str
+):
+    append_doc(repository, "\n" + claim + "\n")
+    assert claim.encode() in (repository / FILES[2]).read_bytes()
+    rejected(repository, "non-EU profile authorization")
+
+
+def test_adversative_subject_scoping_regression(repository: Path):
+    legitimate = (
+        "US está prohibido; no obstante, el perfil UE podrá usarse como contingencia."
+    )
+    append_doc(repository, "\n" + legitimate + "\n")
+    assert legitimate in (repository / FILES[2]).read_text(encoding="utf-8")
+    run_guardrail(repository)
+
+    adversarial_repository = repository.parent / "adversarial-repository"
+    shutil.copytree(repository, adversarial_repository)
+    path = adversarial_repository / FILES[2]
+    adversarial = legitimate.replace("perfil UE", "perfil US")
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(legitimate, adversarial),
+        encoding="utf-8",
+    )
+    assert adversarial in path.read_text(encoding="utf-8")
+    rejected(adversarial_repository, "non-EU profile authorization")
+
+
+@pytest.mark.parametrize(
     "mutation",
     [
         "additional",

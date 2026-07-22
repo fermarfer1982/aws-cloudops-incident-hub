@@ -316,21 +316,8 @@ def negates(clause: str, predicate: str) -> bool:
 
 
 def validate_normative_claims(document: str) -> None:
-    normalized_document = re.sub(r"\s+", " ", document).lower()
-    if re.search(
-        r"\bus\b[^;.!?]*(?:prohibid[oa]|no permitido)[^;.!?]*[;,.]\s*"
-        r"(?:no obstante|sin embargo|aunque|pero)[^;.!?]*"
-        r"(?:podr[aá] usarse|contingencia|fallback)",
-        normalized_document,
-    ):
-        fail("non-EU profile authorization")
-    if re.search(
-        r"listfoundationmodels[^;.!?]*no garantiza[^;.!?]*"
-        r"(?:aunque|pero|sin embargo|no obstante)[^;.!?]*confirma[^;.!?]*"
-        r"invokemodel funcionar[aá]",
-        normalized_document,
-    ):
-        fail("contradictory catalog-access claim")
+    previous_non_eu_prohibition = False
+    previous_catalog_denial = False
     for clause in normative_clauses(document):
         iam_predicate = r"(?:aplicad[oa]|adjuntad[oa]|desplegad[oa])"
         iam_assertion = re.search(
@@ -386,6 +373,13 @@ def validate_normative_claims(document: str) -> None:
             clause,
         ) and not negates(clause, r"(?:confirma|garantiza|prueba|demuestra)"):
             fail("contradictory catalog-access claim")
+        catalog_confirmation = re.search(
+            r"(?:confirma|garantiza|prueba|demuestra).*(?:invokemodel funcionar[aá]|"
+            r"acceso efectivo|cuenta puede invocar|autorizaci[oó]n runtime)",
+            clause,
+        )
+        if previous_catalog_denial and catalog_confirmation:
+            fail("contradictory catalog-access claim")
 
         if re.search(
             r"(?:scp.*no afectan.*cross-region|puede omitirse.*regi[oó]n de destino|"
@@ -402,9 +396,16 @@ def validate_normative_claims(document: str) -> None:
             r"\bus\b|\bapac\b)",
             clause,
         )
+        eu = re.search(
+            r"(?:perfil\s+(?:ue|eu|europeo)|geograf[ií]a\s+(?:ue|eu)|"
+            r"\b(?:ue|eu)\b)",
+            clause,
+        )
         non_eu_use = re.search(
-            r"\b(?:permitid[oa]|autorizad[oa]|puede utilizarse|puede usarse|"
-            r"se permite|podr[aá] usarse|fallback|contingencia)\b",
+            r"\b(?:permitid[oa]|autorizad[oa]|aprobada|puede utilizarse|puede usarse|"
+            r"puede invocarse|se permite|podr[aá] usarse|podr[aá] utilizarse|"
+            r"podr[aá] invocarse|queda autorizado|se autoriza su uso|fallback|"
+            r"contingencia)\b",
             clause,
         )
         non_eu_negated = negates(
@@ -416,6 +417,25 @@ def validate_normative_claims(document: str) -> None:
         )
         if non_eu and non_eu_use and not non_eu_negated:
             fail("non-EU profile authorization")
+        if previous_non_eu_prohibition and non_eu_use and not non_eu and not eu:
+            fail("non-EU profile authorization")
+
+        previous_non_eu_prohibition = bool(
+            non_eu
+            and re.search(
+                r"(?:prohibid[oa]s?|bloquead[oa]s?|no\s+(?:est[aá]\s+)?"
+                r"(?:permitid[oa]s?|autorizad[oa]s?))",
+                clause,
+            )
+        )
+        previous_catalog_denial = bool(
+            re.search(
+                r"(?:listfoundationmodels|getfoundationmodel(?:availability)?|"
+                r"disponibilidad del cat[aá]logo|consulta de solo lectura)",
+                clause,
+            )
+            and re.search(r"\b(?:no|nunca)\b.*\b(?:garantiza|confirma|prueba|demuestra)", clause)
+        )
 
         execution_patterns = (
             r"acceso de (?:la )?cuenta.*(?:est[aá]|queda) verificado",
