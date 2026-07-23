@@ -103,7 +103,7 @@ jobs:
           python-version: "3.13"
           cache: pip
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: steps.preflight.outcome == 'success'
         with:
           node-version: "22"
